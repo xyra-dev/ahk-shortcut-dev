@@ -86,53 +86,14 @@ SendMacro(keys, *) {
     Send(keys)
 }
 
-; Auto click toggle (macro keys "click:100" = left click every 100 ms). One auto clicker at a time.
-; Never runs while Roblox Player is active (games may treat auto click as cheating); Roblox Studio is fine.
-clickOn := false
-Notice(text) {
-    ToolTip(text)
-    SetTimer(() => ToolTip(), -1000)
-}
-
-StopClick(*) {
-    global clickOn
-    SetTimer(DoClick, 0)
-    clickOn := false
-}
-
-DoClick() {
-    if WinActive("ahk_exe RobloxPlayerBeta.exe") {
-        StopClick()
-        Notice("Auto click OFF (Roblox Player)")
-        return
-    }
-    Click()
-}
-
-ToggleClick(ms, *) {
-    global clickOn
-    if clickOn {
-        StopClick()
-        Notice("Auto click OFF")
-        return
-    }
-    if WinActive("ahk_exe RobloxPlayerBeta.exe") {
-        Notice("Auto click is blocked in Roblox Player")
-        return
-    }
-    clickOn := true
-    SetTimer(DoClick, ms)
-    Notice("Auto click ON (" ms " ms)")
-}
-
 ; ---------- Entries added from the panel (+ Add), stored in custom.ini ----------
 ; One section per entry: [c1] with type=Command|Folder|Macro|Snippet, label, value (command / path / keys / text), key,
 ; dir (the folder a command runs in, Command only) and win ("ahk_exe X", Macro only, empty = works in every app).
 ; Old type=App entries load as Command.
 ; label, value and dir are saved with a leading "~" so IniRead never strips quotes or spaces.
 
-; Macro helpers. keys = AHK Send syntax, or "click:100" for the auto clicker (same as macros in config.ahk)
-MacroFn(keys) => RegExMatch(keys, "^click:(\d+)$", &cm) ? ToggleClick.Bind(Integer(cm[1])) : SendMacro.Bind(keys)
+; Macro helpers. keys = AHK Send syntax (same as macros in config.ahk)
+MacroFn(keys) => SendMacro.Bind(keys)
 
 ; Name shown in the list: label + the app it is limited to, e.g. "Command bar  [RobloxStudioBeta.exe]"
 MacroName(label, win) => win = "" ? label : label "  [" RegExReplace(win, "^ahk_exe ") "]"
@@ -449,8 +410,6 @@ ShowAdd(kind := "", vals := "", edit := "") {
             MsgBox("Type the keys first.", "Add entry")
             return
         }
-        if RegExMatch(keys, "i)^click:")
-            return MsgBox("Auto click can't be tested here. Save it and use the shortcut.", "Add entry")
         f.Hide()
         loop 3 {
             ToolTip("Sending in " (4 - A_Index) "... switch to the target app")
@@ -544,10 +503,6 @@ ShowAdd(kind := "", vals := "", edit := "") {
             }
             if RegExMatch(value, "\R") {
                 MsgBox("The keys must be a single line.", "Add entry")
-                return
-            }
-            if RegExMatch(value, "i)^click:") && !RegExMatch(value, "i)^click:\d+$") {
-                MsgBox("Auto click format is click:100 (milliseconds).", "Add entry")
                 return
             }
             if exe != "" && !RegExMatch(exe, 'i)^[^\\/:*?"<>|]+\.exe$') {
@@ -644,7 +599,7 @@ BuildItems() {
         RegisterKey(Opt(item, 4), fn, item[1])
     }
     for item in macros {   ; ["Label", "keys", "key", "window (optional)"]
-        fn := RegExMatch(item[2], "^click:(\d+)$", &cm) ? ToggleClick.Bind(Integer(cm[1])) : SendMacro.Bind(item[2])
+        fn := SendMacro.Bind(item[2])
         scope := Opt(item, 4)
         items.Push(["Macro", item[1] (scope = "" ? "" : "  [" scope "]"), Opt(item, 3), fn, Map("cfg", 1, "text", item[2])])
         RegisterKey(Opt(item, 3), fn, item[1], scope)

@@ -4,13 +4,12 @@
 
 usedKeys := Map("r", "reload", "v", "clipboard history")   ; keys already taken (CapsLock + R / V, see main.ahk)
 items := []                      ; rows of the window: [type, label, key, action]
-state := Map("tab", "Apps", "w", 460, "h", 300)   ; last opened tab + window size (kept while the script runs; resets on reload)
+state := Map("tab", "Command", "w", 460, "h", 300)   ; last opened tab + window size (kept while the script runs; resets on reload)
 
 histFile := A_ScriptDir "\history.ini"   ; last run entries, survives reload and restart
 histMax := 100
 customFile := A_ScriptDir "\custom.ini"   ; entries added from the panel (+ Add), one section per entry
 usedTriggers := Map()                    ; snippet triggers already taken (lowercase)
-placesFile := A_AppData "\com.gztudio.openplace\places.json"   ; place list of the Open Place app (read only)
 history := []                            ; ids ("Type|Label"), newest first
 
 ; Opens the folder, then brings its Explorer window to the front (Windows may otherwise leave it minimized in the taskbar)
@@ -24,63 +23,29 @@ OpenFolder(path, *) {
     }
 }
 
+; PowerShell -EncodedCommand wants base64 of the UTF-16 text, so quotes and special characters in a command can't break the command line
+EncodePS(text) {
+    n := StrPut(text, "UTF-16")   ; characters incl. the terminating null
+    buf := Buffer(n * 2)
+    StrPut(text, buf, "UTF-16")
+    bytes := (n - 1) * 2   ; without the null
+    chars := 0
+    DllCall("Crypt32\CryptBinaryToStringW", "Ptr", buf, "UInt", bytes, "UInt", 0x40000001, "Ptr", 0, "UInt*", &chars)   ; 0x40000001 = base64, no line breaks
+    out := Buffer(chars * 2)
+    DllCall("Crypt32\CryptBinaryToStringW", "Ptr", buf, "UInt", bytes, "UInt", 0x40000001, "Ptr", out, "UInt*", &chars)
+    return StrGet(out, "UTF-16")
+}
+
 ; -NoExit keeps the terminal open so you can see output/errors
 ; -ExecutionPolicy Bypass (this window only) lets .ps1 scripts and npm.ps1 run
+; The first line of the window shows the command that runs (grey), remove the Write-Host part if you don't want it
 RunCommand(dir, cmd, *) {
-    Run('powershell.exe -NoExit -ExecutionPolicy Bypass -Command "' cmd '"', dir)
+    script := "Write-Host '> " StrReplace(cmd, "'", "''") "' -ForegroundColor DarkGray`n" cmd
+    Run('powershell.exe -NoExit -ExecutionPolicy Bypass -EncodedCommand ' EncodePS(script), dir)
 }
 
 TypeText(text, *) {
     SendText(text)
-}
-
-; Newest Roblox Studio install (Studio gets a new version folder on every update)
-FindStudio() {
-    best := "", bestTime := 0
-    loop files EnvGet("LOCALAPPDATA") "\Roblox\Versions\*", "D" {
-        exe := A_LoopFilePath "\RobloxStudioBeta.exe"
-        if !FileExist(exe)
-            continue
-        t := FileGetTime(exe)
-        if t > bestTime {
-            best := exe
-            bestTime := t
-        }
-    }
-    return best
-}
-
-; Same command as Open Place: RobloxStudioBeta.exe --task EditPlace --placeId X --universeId Y
-OpenStudio(placeId, universeId, *) {
-    if universeId = "" {
-        MsgBox("This place has no Universe ID, so Studio can't open it.`nAdd it again in Open Place with its Universe ID.", "Studio")
-        return
-    }
-    exe := FindStudio()
-    if exe = "" {
-        MsgBox("RobloxStudioBeta.exe not found in %LOCALAPPDATA%\Roblox\Versions", "Studio")
-        return
-    }
-    Run('"' exe '" --task EditPlace --placeId ' placeId ' --universeId ' universeId)
-}
-
-; One Apps row per place in Open Place's places.json: [{ "name", "placeId", "universeId" }]
-LoadPlaces() {
-    if !FileExist(placesFile)
-        return
-    json := FileRead(placesFile, "UTF-8")
-    pos := 1
-    while pos := RegExMatch(json, "\{[^{}]*\}", &m, pos) {
-        pos += m.Len
-        obj := m[0]
-        if !RegExMatch(obj, '"name"\s*:\s*"((?:[^"\\]|\\.)*)"', &n)
-            continue
-        if !RegExMatch(obj, '"placeId"\s*:\s*"?(\d+)', &p)
-            continue
-        u := RegExMatch(obj, '"universeId"\s*:\s*"?(\d+)', &uni) ? uni[1] : ""
-        name := StrReplace(StrReplace(n[1], '\"', '"'), "\\", "\")
-        items.Push(["Apps", "Roblox Studio : " name, "", OpenStudio.Bind(p[1], u), Map()])
-    }
 }
 
 EditConfig(*) {
@@ -161,14 +126,20 @@ ToggleClick(ms, *) {
 }
 
 ; ---------- Entries added from the panel (+ Add), stored in custom.ini ----------
-; One section per entry: [c1] with type=Folder|Snippet, label, value (path or text), key.
-; label and value are saved with a leading "~" so IniRead never strips quotes or spaces.
+; One section per entry: [c1] with type=Command|Folder|Snippet, label, value (command / path / text), key,
+; and dir (the folder a command runs in, Command only). Old type=App entries load as Command.
+; label, value and dir are saved with a leading "~" so IniRead never strips quotes or spaces.
 
 CustomWrite(sec, name, text) => IniWrite("~" text, customFile, sec, name)
 CustomRead(sec, name) => SubStr(IniRead(customFile, sec, name, "~"), 2)
 
 ; Builds the row for one custom entry and claims its key / trigger.
-MakeCustomItem(sec, kind, label, value, key) {
+MakeCustomItem(sec, kind, label, value, key, dir := "") {
+    if kind = "Command" {   ; value = command, dir = folder it runs in
+        fn := RunCommand.Bind(dir, value)
+        RegisterKey(key, fn, label)
+        return ["Command", label, key, fn, Map("dir", dir, "cmd", value, "custom", sec)]
+    }
     if kind = "Folder" {
         fn := OpenFolder.Bind(value)
         RegisterKey(key, fn, label)
@@ -192,12 +163,15 @@ LoadCustom() {
         if sec = ""
             continue
         kind := IniRead(customFile, sec, "type", "")
+        if kind = "App"   ; the App type was removed, old entries become Commands
+            kind := "Command"
         label := CustomRead(sec, "label")
         value := CustomRead(sec, "value")
         key := CustomRead(sec, "key")
+        dir := CustomRead(sec, "dir")
         if label = "" || value = ""
             continue
-        row := MakeCustomItem(sec, kind, label, value, key)
+        row := MakeCustomItem(sec, kind, label, value, key, dir)
         if row != ""
             items.Push(row)
     }
@@ -211,7 +185,7 @@ NextCustomId() {
 }
 
 ; Saves a new entry to custom.ini and adds it live (no reload needed)
-AddCustom(kind, label, value, key) {
+AddCustom(kind, label, value, key, dir := "") {
     if !FileExist(customFile)
         FileAppend("", customFile, "UTF-16")   ; Unicode ini, so emoji / accents in snippets and paths survive
     sec := NextCustomId()
@@ -219,7 +193,9 @@ AddCustom(kind, label, value, key) {
     CustomWrite(sec, "label", label)
     CustomWrite(sec, "value", value)
     CustomWrite(sec, "key", key)
-    row := MakeCustomItem(sec, kind, label, value, key)
+    if dir != ""
+        CustomWrite(sec, "dir", dir)
+    row := MakeCustomItem(sec, kind, label, value, key, dir)
     items.Push(row)
     SortItems()
 }
@@ -248,45 +224,83 @@ RemoveCustom(it) {
     RemoveHistory(it)
 }
 
-; The "+ Add" form. Types so far: Folder and Snippet.
-ShowAdd() {
+; True if the tab already has an entry with this name (History ids are "Type|Name", so names must be unique per type)
+NameTaken(tab, label) {
+    for it in items
+        if it[1] = tab && it[2] = label
+            return true
+    return false
+}
+
+; The "+ Add" form. Types: Command, Folder and Snippet.
+; The form is rebuilt from scratch whenever the type changes (just toggling .Visible leaves gaps).
+; vals carries what was already typed, and the window position, over to the rebuilt form.
+ShowAdd(kind := "", vals := "") {
     static f := ""
     if IsObject(f)
         try f.Destroy()
+    if !IsObject(vals)
+        vals := Map()
+    if kind = ""   ; open on the type that matches the current tab
+        kind := Map("Command", "Command", "Folder", "Folder", "Snippet", "Snippet").Get(state["tab"], "Command")
+    tabName := kind   ; tab (= item type) the new entry ends up in
+    isSnip := kind = "Snippet"
+    isCmd := kind = "Command"
+
     f := Gui("+AlwaysOnTop", "Add entry")
     f.SetFont("s10", "Segoe UI")
     f.Add("Text", "w320", "Type")
-    ddl := f.Add("DropDownList", "w320 Choose1", ["Folder", "Snippet"])
-    t1 := f.Add("Text", "w320", "")
-    e1 := f.Add("Edit", "w320")
-    t2 := f.Add("Text", "w320", "")
-    e2 := f.Add("Edit", "w320")
-    br := f.Add("Button", "w320", "Browse...")
-    kt := f.Add("Text", "w320", "Key (optional): CapsLock + key")
-    e3 := f.Add("Edit", "w40 Limit1")
+    ddl := f.Add("DropDownList", "w320", ["Command", "Folder", "Snippet"])
+    ddl.Choose(kind)
+    eName := eDir := eCmd := eKey := eTrig := eText := br := ""
+    if isSnip {   ; Snippet: Trigger -> Text
+        f.Add("Text", "w320", "Trigger (e.g. `;gm)")
+        eTrig := f.Add("Edit", "w320", vals.Get("trigger", ""))
+        f.Add("Text", "w320", "Text to type")
+        eText := f.Add("Edit", "w320", vals.Get("text", ""))
+    } else {   ; Folder: Name -> Folder -> Key.  App / Command: Name -> Folder -> Command -> Key
+        f.Add("Text", "w320", "Name (shown in the menu)")
+        eName := f.Add("Edit", "w320", vals.Get("name", ""))
+        f.Add("Text", "w320", kind = "Folder" ? "Folder path" : "Folder to run in")
+        eDir := f.Add("Edit", "w320", vals.Get("dir", ""))
+        br := f.Add("Button", "w320", "Browse...")
+        if isCmd {
+            f.Add("Text", "w320", "Command (one line)")
+            eCmd := f.Add("Edit", "w320", vals.Get("cmd", ""))
+        }
+        f.Add("Text", "w320", "Key (optional): CapsLock + key")
+        eKey := f.Add("Edit", "w40 Limit1", vals.Get("key", ""))
+    }
     ok := f.Add("Button", "Default w100 xm", "Add")
     cancelBtn := f.Add("Button", "x+10 w100", "Cancel")
 
-    ; Labels and visible fields follow the chosen type
-    Sync(*) {
-        folder := ddl.Text = "Folder"
-        t1.Text := folder ? "Name (shown in the menu)" : "Trigger (e.g. `;gm)"
-        t2.Text := folder ? "Folder path" : "Text to type"
-        br.Visible := folder
-        kt.Visible := folder
-        e3.Visible := folder
+    ; Remembers the typed values + window position before the form is rebuilt for another type
+    Collect() {
+        if isSnip {
+            vals["trigger"] := eTrig.Value
+            vals["text"] := eText.Value
+        } else {
+            vals["name"] := eName.Value
+            vals["dir"] := eDir.Value
+            vals["key"] := eKey.Value
+            if isCmd
+                vals["cmd"] := eCmd.Value
+        }
+        f.GetPos(&px, &py)
+        vals["x"] := px
+        vals["y"] := py
     }
 
     Browse(*) {
         f.Opt("+OwnDialogs")
-        start := (e2.Value != "" && DirExist(e2.Value)) ? e2.Value : "C:\"
-        p := DirSelect("*" start, 0, "Pick a folder")
+        start := (eDir.Value != "" && DirExist(eDir.Value)) ? eDir.Value : (DirExist("C:\Dev_Ex") ? "C:\Dev_Ex" : "C:\")
+        p := FileSelect("D", start, "Pick a folder")   ; "D" = modern Explorer-style folder picker (resizable, address bar)
         if p = ""
             return
-        e2.Value := p
-        if Trim(e1.Value) = "" {
+        eDir.Value := p
+        if kind = "Folder" && Trim(eName.Value) = "" {   ; only a folder entry is named after its folder
             SplitPath(p, &nm)
-            e1.Value := nm
+            eName.Value := nm
         }
     }
 
@@ -297,21 +311,44 @@ ShowAdd() {
 
     Save(*) {
         f.Opt("+OwnDialogs")
-        kind := ddl.Text
-        label := Trim(e1.Value)
-        value := e2.Value
+        dir := ""
         key := ""
-        if kind = "Folder" {
-            value := Trim(Trim(value), '"')   ; drop quotes that come with "Copy as path"
-            key := Trim(e3.Value)
-        }
-        if label = "" || value = "" {
-            MsgBox("Please fill in " (kind = "Folder" ? "name and path." : "trigger and text."), "Add entry")
-            return
-        }
-        if kind = "Folder" {
-            if !DirExist(value) {
-                MsgBox("Folder not found:`n" value, "Add entry")
+        if isSnip {
+            label := Trim(eTrig.Value)
+            value := eText.Value
+            if label = "" || value = "" {
+                MsgBox("Please fill in trigger and text.", "Add entry")
+                return
+            }
+            if SubStr(label, 1, 1) != ";"
+                label := ";" label
+            if StrLen(label) < 2 || InStr(label, " ") {
+                MsgBox("The trigger can't be empty or contain spaces, e.g. `;gm", "Add entry")
+                return
+            }
+            if usedTriggers.Has(StrLower(label)) {
+                MsgBox("The trigger " label " already exists.", "Add entry")
+                return
+            }
+        } else {
+            label := Trim(eName.Value)
+            dir := Trim(Trim(eDir.Value), '"')   ; drop quotes that come with "Copy as path"
+            key := Trim(eKey.Value)
+            value := isCmd ? Trim(eCmd.Value) : dir   ; Folder keeps its path as the value
+            if label = "" || dir = "" || value = "" {
+                MsgBox("Please fill in " (isCmd ? "name, folder and command." : "name and path."), "Add entry")
+                return
+            }
+            if isCmd && RegExMatch(value, "\R") {
+                MsgBox("The command must be a single line.", "Add entry")
+                return
+            }
+            if !DirExist(dir) {
+                MsgBox("Folder not found:`n" dir, "Add entry")
+                return
+            }
+            if NameTaken(tabName, label) {
+                MsgBox("There is already a " kind " named '" label "'.", "Add entry")
                 return
             }
             if key != "" {
@@ -324,46 +361,30 @@ ShowAdd() {
                     return
                 }
             }
-        } else {
-            if SubStr(label, 1, 1) != ";"
-                label := ";" label
-            if StrLen(label) < 2 || InStr(label, " ") {
-                MsgBox("The trigger can't be empty or contain spaces, e.g. `;gm", "Add entry")
-                return
-            }
-            if usedTriggers.Has(StrLower(label)) {
-                MsgBox("The trigger " label " already exists.", "Add entry")
-                return
-            }
         }
         try {
-            AddCustom(kind, label, value, key)
+            AddCustom(kind, label, value, key, isCmd ? dir : "")
         } catch as err {
             MsgBox("Could not save:`n" err.Message, "Add entry")
             return
         }
         try f.Destroy()
-        state["tab"] := kind   ; reopen the menu on the tab of the new entry
+        state["tab"] := tabName   ; reopen the menu on the tab of the new entry
         ShowMenu()
     }
 
-    ddl.OnEvent("Change", Sync)
-    br.OnEvent("Click", Browse)
+    ddl.OnEvent("Change", (*) => (Collect(), ShowAdd(ddl.Text, vals)))   ; rebuild the form for the new type
+    if IsObject(br)
+        br.OnEvent("Click", Browse)
     ok.OnEvent("Click", Save)
     cancelBtn.OnEvent("Click", Cancel)
     f.OnEvent("Escape", Cancel)
     f.OnEvent("Close", Cancel)
-    Sync()
-    f.Show()
-    e1.Focus()
+    f.Show(vals.Has("x") ? "x" vals["x"] " y" vals["y"] : "")
+    (isSnip ? eTrig : eName).Focus()
 }
 
 BuildItems() {
-    for item in apps {   ; same format as commands, only shown under its own tab
-        fn := RunCommand.Bind(item[2], item[3])
-        items.Push(["Apps", item[1], Opt(item, 4), fn, Map("cfg", 1, "dir", item[2], "cmd", item[3])])
-        RegisterKey(Opt(item, 4), fn, item[1])
-    }
     for item in folders {
         fn := OpenFolder.Bind(item[2])
         items.Push(["Folder", item[1], Opt(item, 3), fn, Map("cfg", 1, "path", item[2])])
@@ -386,7 +407,6 @@ BuildItems() {
         items.Push(["Snippet", item[1] "  =  " Shorten(item[2]), "", TypeText.Bind(item[2]), Map("cfg", 1, "text", item[2])])
     }
     LoadCustom()
-    LoadPlaces()
     items.Push(["Script", "Edit config.ahk", "", EditConfig, Map()])
     items.Push(["Script", "Clipboard history", "v", (*) => Send("#v"), Map()])   ; hotkey itself lives in main.ahk
     items.Push(["Script", "Reload script", "r", (*) => Reload(), Map()])
@@ -483,7 +503,7 @@ ShowMenu() {
         g.Destroy()
     g := Gui("+AlwaysOnTop +Resize -MinimizeBox -MaximizeBox +MinSize460x300", "Dev Menu")   ; -MaximizeBox must come after +Resize (Resize re-enables it)
     g.SetFont("s10", "Segoe UI")
-    tabs := g.Add("Tab3", "w580 h28", ["History", "Apps", "Command", "Folder", "Macro", "Script", "Snippet"])
+    tabs := g.Add("Tab3", "w580 h28", ["History", "Command", "Folder", "Macro", "Script", "Snippet"])
     tabs.UseTab()   ; controls below are outside the tab, so the list isn't clipped inside it
     lv := g.Add("ListView", "r14 w580 -Multi NoSort", ["Name", "Shortcut", "Type"])
     shown := []   ; rows currently in the list (same order), so row number -> item
@@ -608,6 +628,18 @@ ShowMenu() {
     hint := g.Add("Text", "xm", "Enter = run     Right-click = more     Esc = close")
     addBtn := g.Add("Button", "w70", "+ Add")
     addBtn.OnEvent("Click", (*) => (g.Destroy(), ShowAdd()))
+    ; Right-click on empty panel space (margins, bottom strip): script actions
+    ShowPanelMenu() {
+        m := Menu()
+        m.Add("Reload script", (*) => Reload())
+        m.Add("Open script folder", (*) => (g.Destroy(), OpenFolder(A_ScriptDir)))
+        m.Add("Edit config.ahk", (*) => (g.Destroy(), EditConfig()))
+        if tabs.Text = "History" {   ; only History has something to clear
+            m.Add()
+            m.Add("Clear all history", (*) => AskClear())
+        }
+        m.Show()
+    }
     g.Add("Button", "Default Hidden").OnEvent("Click", (*) => RunRow())   ; Enter key
     ; Resize: tab + list follow the window width, list also follows the height, hint stays at the bottom
     OnSize(guiObj, minMax, w, h) {
@@ -626,6 +658,7 @@ ShowMenu() {
         FitCols()   ; keep columns fitted to the new width
     }
     g.OnEvent("Size", OnSize)
+    g.OnEvent("ContextMenu", (gObj, ctrl, item, isRight, x, y) => (!ctrl || ctrl = hint) ? ShowPanelMenu() : "")   ; only empty space, controls keep their own
     g.OnEvent("Escape", (*) => g.Destroy())
     g.OnEvent("Close", (*) => g.Destroy())
     g.Show("w" state["w"] " h" state["h"])   ; reopen at the last size (default = minimum, same as +MinSize)

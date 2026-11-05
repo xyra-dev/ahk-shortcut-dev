@@ -5,7 +5,7 @@ CapsLock = tombol "leader" (fungsi caps dimatiin, pakai Shift buat kapital).
 
 ## Pakai
 
-- **`CapsLock + klik kanan`**: jendela daftar dengan tab filter (History, Apps, Command, Folder, Script, Snippet). Double-click, atau pilih baris pakai panah lalu Enter = langsung jalan, Esc = tutup. Ctrl+Tab = ganti tab.
+- **`CapsLock + klik kanan`**: jendela daftar dengan tab filter (History, Command, Folder, Macro, Script, Snippet). Double-click, atau pilih baris pakai panah lalu Enter = langsung jalan, Esc = tutup. Ctrl+Tab = ganti tab.
 - **`CapsLock + huruf`**: shortcut langsung, huruf yang kamu set di config (kelihatan sebagai hint di menu).
 - **`CapsLock + R`**: reload script.
 - **Snippet**: ketik trigger (misal `;ok`) + spasi/Enter/Tab, atau klik dari menu.
@@ -14,7 +14,7 @@ CapsLock = tombol "leader" (fungsi caps dimatiin, pakai Shift buat kapital).
 
 | File | Isi |
 |---|---|
-| `config.ahk` | **Satu-satunya file yang diedit**: apps, folders, commands, snippets |
+| `config.ahk` | Array bawaan (folders, commands, macros, snippets), sekarang kosong kecuali macro; entry baru ditambah lewat panel **+ Add** (disimpan di `custom.ini`) |
 | `menu.ahk` | Mesin: bikin menu + daftarin hotkey/hotstring dari config |
 | `main.ahk` | Entry point, include, `CapsLock+R` reload |
 | `_old/` | Backup file versi lama (aman dihapus) |
@@ -24,11 +24,6 @@ Urutan include di `main.ahk` jangan diubah: config dulu, baru menu.
 ## Cara nambah / ubah (semua di `config.ahk`)
 
 Setelah edit: **`CapsLock + R`**. Entry terakhir di list nggak pakai koma.
-
-**App**: format sama persis dengan Command, `["Label", "folder tempat jalan", "command", "key"]`, key opsional. Bedanya cuma tampil di tab **Apps**, buat shortcut ke aplikasimu.
-```
-["Xyra Dashboard", "C:\Dev_Ex\Apps\Xyra_Dashboard_Wip2", "npm run tauri dev", "d"],
-```
 
 **Folder**: `["Label", "path", "key"]`, key opsional.
 ```
@@ -58,26 +53,26 @@ Dengan key `b`, `CapsLock + B` langsung buka folder, dan menu nampilin hint-nya.
 
 - Key `R` dipakai reload. Kalau key di config bentrok, muncul pesan dan entry itu cuma ada di menu.
 - Jendela muncul **setelah klik kanan dilepas** (`KeyWait`), supaya lepasnya klik nggak kepencet ke baris.
-- Terminal pakai PowerShell `-NoExit` + `-ExecutionPolicy Bypass` supaya output/error tetap kelihatan dan script `.ps1`/`npm` bisa jalan.
+- Terminal pakai PowerShell `-NoExit` + `-ExecutionPolicy Bypass` supaya output/error tetap kelihatan dan script `.ps1`/`npm` bisa jalan. Command dikirim lewat `-EncodedCommand` (base64), jadi tanda kutip ganda dan karakter aneh di command aman. Baris pertama jendela (abu-abu, `> command`) menunjukkan apa yang dijalankan.
 - Daftar punya item "Edit config.ahk" dan "Reload script" (tipe Script).
-- **Roblox Studio di tab Apps**: satu baris per place dari `places.json` milik app Open Place (`%APPDATA%\com.gztudio.openplace\places.json`, cuma dibaca, nggak diubah), namanya `Roblox Studio : nama place`. Double-click / Enter = buka place di Roblox Studio (`RobloxStudioBeta.exe --task EditPlace --placeId --universeId`, versi Studio terbaru dicari otomatis). Place tanpa Universe ID muncul pesan, nggak jalan. Tambah/hapus place lewat app Open Place, lalu `CapsLock + R` supaya daftar ke-refresh. Kalau file nggak ada, barisnya nggak muncul. Hanya Edit (Studio), Play tetap lewat Open Place.
 
 ## Perilaku jendela (`menu.ahk`, fungsi `ShowMenu`)
 
-- Tab: `History | Apps | Command | Folder | Macro | Script | Snippet`. History di paling depan (tab spesial, bukan tipe), sisanya urut alfabet dan nama tab = tipe entry, jadi kalau nambah tipe baru, tambah juga namanya di list tab.
+- Tab: `History | Command | Folder | Macro | Script | Snippet`. History di paling depan (tab spesial, bukan tipe), sisanya urut alfabet dan nama tab = tipe entry, jadi kalau nambah tipe baru, tambah juga namanya di list tab.
 - **History**: 100 entry terakhir yang dijalanin dari jendela ini (Enter / double-click), terbaru di atas, nggak dobel. Disimpan di `history.ini` (folder script), awet setelah reload dan restart. Shortcut `CapsLock + huruf` dan snippet hotstring nggak dicatat karena nggak lewat jendela. Entry yang sudah dihapus dari `config.ahk` otomatis nggak muncul. Hapus `history.ini` buat reset, atau klik kanan di tab History lalu pilih "Clear all history" (ada konfirmasi) / "Remove from History" buat satu entry. Limit ubah di `histMax` (`menu.ahk`). Kolom Type cuma tampil di tab ini.
-- **Urutan**: tab Apps/Command/Folder/Macro/Script/Snippet diurutkan A-Z berdasarkan nama (nggak peduli huruf besar/kecil), otomatis, jadi urutan di `config.ahk` bebas. History tetap urut terbaru di atas.
-- Tab terakhir dan ukuran jendela terakhir diingat selama script jalan (disimpan di `state`). Habis reload atau restart PC, balik ke default: tab `Apps`, ukuran minimum `460x300`.
+- **Urutan**: tab Command/Folder/Macro/Script/Snippet diurutkan A-Z berdasarkan nama (nggak peduli huruf besar/kecil), otomatis, jadi urutan di `config.ahk` bebas. History tetap urut terbaru di atas.
+- Tab terakhir dan ukuran jendela terakhir diingat selama script jalan (disimpan di `state`). Habis reload atau restart PC, balik ke default: tab `Command`, ukuran minimum `460x300`.
 - Nggak ada baris yang kepilih otomatis pas dibuka: pilih pakai panah atau klik, lalu Enter / double-click.
 - Teks yang tampil di jendela (judul, kolom, tab, pesan) pakai bahasa Inggris. Nama entry di `config.ahk` bebas, komentar boleh Indonesia.
 - Ukuran awal: kebuka di ukuran terakhir (default ukuran minimum `w460 h300`, sama dengan `+MinSize`), bisa ditarik lebih besar. Tab + list ikut lebar, list ikut tinggi, kolom Name nyerap sisa lebar (Shortcut `140` tetap; kolom Type `80` cuma tampil di tab History, di tab lain disembunyiin karena isinya sama dengan nama tab, jadi Name lebih lebar). Lebar dihitung pas buka, resize, dan ganti tab. Minimize dan maximize dimatiin (`-MinimizeBox -MaximizeBox`), resize lewat tarik pinggir tetap bisa. Tampilan glass ikut tema sistem (WinHawk).
 
 ## Tambah entry dari panel (+ Add)
 
-Tombol **+ Add** di pojok kanan bawah jendela. Tipe yang sudah ada: **Folder** dan **Snippet**.
+Tombol **+ Add** di pojok kanan bawah jendela. **Klik kanan di area kosong panel** (margin kiri/kanan, strip bawah) membuka menu script: Reload script, Open script folder, Edit config.ahk, dan Clear all history yang cuma muncul di tab History. Tipe yang sudah ada: **Command**, **Folder**, dan **Snippet** (tipe App sudah dihapus, buat aplikasi pakai Command; entry App lama di `custom.ini` otomatis kebaca sebagai Command). Form dibangun ulang tiap ganti tipe, isian yang sudah diketik (nama, folder, command, key) ikut terbawa.
+- **Command**: nama, folder tempat jalan (ada tombol Browse, picker folder modern), command satu baris, key opsional. Muncul di tab Command, jalan lewat `RunCommand` (`-EncodedCommand`). File `.bat` / `.exe` bisa langsung ditulis path-nya, kalau ada spasi pakai `& "path lengkap"`. Dicek: semua wajib diisi kecuali key, command harus satu baris, folder harus ada, **nama nggak boleh kembar di tab yang sama**, key seperti Folder.
 - **Folder**: nama, path (ada tombol Browse), key opsional. Dicek: folder harus ada, key 1 huruf/angka, nggak boleh bentrok (`usedKeys`).
 - **Snippet**: trigger (otomatis diawali `;`, nggak boleh spasi, nggak boleh dobel) dan teks yang diketik.
-- Disimpan di `custom.ini` (satu section per entry: `type`, `label`, `value`, `key`), langsung aktif tanpa reload. File ini di `.gitignore`, formatnya UTF-16 supaya emoji/aksen aman.
+- Disimpan di `custom.ini` (satu section per entry: `type`, `label`, `value`, `key`, plus `dir` untuk App/Command), langsung aktif tanpa reload. File ini di `.gitignore`, formatnya UTF-16 supaya emoji/aksen aman.
 - Hapus: klik kanan entry lalu **Remove entry** (key/trigger dimatikan, hilang dari `custom.ini` dan History). Hanya entry dari panel yang bisa dihapus dari sini, entry dari `config.ahk` tetap diedit manual.
 - Di teks AHK, tanda `;` setelah spasi dianggap komentar walau di dalam tanda kutip, tulis `` `; `` kalau mau `;` biasa di dalam string.
 
@@ -98,9 +93,14 @@ Catatan: key yang sudah terpakai `R` (reload) dan `V` (clipboard history). Macro
 
 **Panel + Add (urutan kerja, satu langkah satu commit)**
 
+Tujuan: semua entry ditambah lewat panel, `config.ahk` tinggal contoh format. Satu langkah satu commit, urut dari atas.
+
 - [x] Tahap 1: Folder + Snippet, simpan ke `custom.ini`, Remove entry, cek bentrok key/trigger.
-- [ ] Tombol **⚙** kecil di strip bawah, di samping **+ Add**. Menunya: Reload script, Open script folder, Edit config.ahk, dan Clear all history (cuma di tab History). Klik kanan area kosong sengaja nggak dipakai.
-- [ ] Tahap 2: tipe **App** dan **Command** di form Add (nama, folder tempat jalan + Browse, command, key opsional). Format keduanya sama, bedanya cuma tab tujuan. Hati-hati tanda kutip ganda di command (dibungkus `-Command "..."`).
-- [ ] Bersihin `config.ahk`: entry lama di-comment (jangan dihapus total, jadi contoh format), termasuk folder `AHK Shortcut (edit)` + key `S` yang diganti tombol ⚙. Yang nggak ikut: item Script bawaan dan baris Roblox Studio dari Open Place.
+- [x] **Hapus entry Roblox Studio otomatis** (`placesFile`, `FindStudio`, `OpenStudio`, `LoadPlaces` + pemanggilnya di `BuildItems`, dan catatannya di README). Buka place tetap lewat app Open Place. Entry lama di History hilang sendiri.
+- [x] Menu script lewat **klik kanan di area kosong panel** (awalnya tombol ⚙, dibuang karena jelek). Isinya: Reload script, Open script folder, Edit config.ahk, dan Clear all history (cuma di tab History).
+- [x] **Command pakai `-EncodedCommand`**: `RunCommand` meng-encode command (base64 UTF-16) sebelum dikirim ke PowerShell, jadi tanda kutip ganda dan karakter aneh aman tanpa validasi. Tetap `-NoExit`, folder jalan tetap, opsional `Write-Host` command di awal biar kelihatan. Berlaku juga untuk entry `config.ahk`.
+- [x] Tahap 2: tipe **App** dan **Command** di form Add. Urutan field: **Name, Folder + Browse (folder tempat jalan), Command (satu baris), Key (opsional)**. Urutan field tipe lain tetap: Folder = Name, Folder, Key; Snippet = Trigger, Text. Format App dan Command sama, bedanya cuma tab tujuan, disimpan di `custom.ini` dengan field tambahan `dir`. Form dibangun ulang tiap ganti tipe (bukan sekadar `.Visible`, supaya nggak bolong). Tambah cek **nama kembar per tipe** saat Save (History pakai ID `Tipe|Nama`).
+- [x] Bersihin `config.ahk`: array apps, folders, commands, snippets dikosongkan (entry lama dihapus, ditambah ulang lewat panel), termasuk folder `AHK Shortcut (edit)` + key `S` yang diganti menu klik kanan (Open script folder). Macro (Auto click) tetap karena panel belum bisa nambah Macro. Item Script bawaan nggak ikut.
 - [ ] Tahap 3: tipe **Macro** (sintaks `Send` rawan salah, mungkin perlu tombol Test). Ditunda sampai ada daftar kombinasi yang mau dibikin.
-- Edit entry sengaja ditunda: History pakai ID `Tipe|Nama`, jadi ganti nama memutus History. Remove lalu Add ulang cukup untuk sekarang.
+- Edit entry sengaja ditunda: History pakai ID `Tipe|Nama`, jadi ganti nama memutus History. Remove lalu Add ulang cukup untuk sekarang. Dilihat lagi setelah Tahap 2 dipakai beberapa hari. Kalau jadi dibuat: Edit boleh ubah semua field, dan kalau nama berubah, entry lama di History dibuang (bukan diganti), form Add dipakai ulang dengan field terisi.
+- Ditunda: app Xyra Studio yang cara jalannya beda dari `tauri dev` biasa, belum jelas butuh tipe tambahan atau nggak.

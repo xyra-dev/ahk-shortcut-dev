@@ -6,27 +6,11 @@
 ; Entries without a key only appear in the CapsLock + right click menu.
 ; Reserved keys: R (reload). Right click is the menu itself.
 
-; ["Label", "Folder to run in", "Command", "key (optional)"]
-; Shortcuts that start your apps (same format as commands, just grouped in the Apps tab)
-apps := [
-    ["Xyra Dashboard", "C:\Dev_Ex\Apps\Xyra_Dashboard_Wip2", "npm run tauri dev"],
-    ["Open Place",     "C:\Dev_Ex\Apps\tauri-workspace-XyraDev\apps\open-place", "pnpm tauri dev"]
-]
-
 ; ["Label", "Folder path", "key (optional)"]
-folders := [
-    ["Dev_Ex (root)",       "C:\Dev_Ex"],
-    ["Apps",                "C:\Dev_Ex\Apps",                              "a"],
-    ["Xyra Dashboard",      "C:\Dev_Ex\Apps\Xyra_Dashboard_Wip2"],
-    ["Tauri Workspace",     "C:\Dev_Ex\Apps\tauri-workspace-XyraDev"],
-    ["Dev_Zee_Tools",       "C:\Dev_Ex\Apps\Dev_Zee_Tools",                "t"],
-    ["AHK Shortcut (edit)", "C:\Dev_Ex\AHK Shorcut Dev",                   "s"]
-]
+folders := []
 
 ; ["Label", "Folder to run in", "Command", "key (optional)"]
-commands := [
-    ["Workspace: pick app",       "C:\Dev_Ex\Apps\tauri-workspace-XyraDev", ".\scripts\pick-app.ps1"]
-]
+commands := []
 
 ; ["Label", "keys", "key (optional)", "window (optional)"]
 ; Macro = sends a key sequence in AHK Send syntax: ^ = Ctrl, + = Shift, ! = Alt, # = Win, {Enter} {Tab} {Left 3} {Home}
@@ -42,6 +26,4 @@ macros := [
 ; ["trigger", "text"]
 ; Type the trigger + space/Enter/Tab and it becomes the text. Clicking it in the menu types the text.
 ; Start triggers with ; so they never fire during normal typing.
-snippets := [
-    [";ok", "okeey sip"]
-]
+snippets := []

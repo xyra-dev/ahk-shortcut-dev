@@ -72,6 +72,15 @@ Dengan key `b`, `CapsLock + B` langsung buka folder, dan menu nampilin hint-nya.
 - Teks yang tampil di jendela (judul, kolom, tab, pesan) pakai bahasa Inggris. Nama entry di `config.ahk` bebas, komentar boleh Indonesia.
 - Ukuran awal: kebuka di ukuran terakhir (default ukuran minimum `w460 h300`, sama dengan `+MinSize`), bisa ditarik lebih besar. Tab + list ikut lebar, list ikut tinggi, kolom Name nyerap sisa lebar (Shortcut `140` tetap; kolom Type `80` cuma tampil di tab History, di tab lain disembunyiin karena isinya sama dengan nama tab, jadi Name lebih lebar). Lebar dihitung pas buka, resize, dan ganti tab. Minimize dan maximize dimatiin (`-MinimizeBox -MaximizeBox`), resize lewat tarik pinggir tetap bisa. Tampilan glass ikut tema sistem (WinHawk).
 
+## Tambah entry dari panel (+ Add)
+
+Tombol **+ Add** di pojok kanan bawah jendela. Tipe yang sudah ada: **Folder** dan **Snippet**.
+- **Folder**: nama, path (ada tombol Browse), key opsional. Dicek: folder harus ada, key 1 huruf/angka, nggak boleh bentrok (`usedKeys`).
+- **Snippet**: trigger (otomatis diawali `;`, nggak boleh spasi, nggak boleh dobel) dan teks yang diketik.
+- Disimpan di `custom.ini` (satu section per entry: `type`, `label`, `value`, `key`), langsung aktif tanpa reload. File ini di `.gitignore`, formatnya UTF-16 supaya emoji/aksen aman.
+- Hapus: klik kanan entry lalu **Remove entry** (key/trigger dimatikan, hilang dari `custom.ini` dan History). Hanya entry dari panel yang bisa dihapus dari sini, entry dari `config.ahk` tetap diedit manual.
+- Di teks AHK, tanda `;` setelah spasi dianggap komentar walau di dalam tanda kutip, tulis `` `; `` kalau mau `;` biasa di dalam string.
+
 ## Roadmap
 
 **Macro / remap shortcut (engine sudah jadi, isi macro belum)**
@@ -86,3 +95,12 @@ Sudah jadi: jenis entry **Macro** (tab sendiri di menu, array `macros` di `confi
 Belum: isi macro sebenarnya (nunggu daftar kombinasi yang paling nyebelin dipencet), macro dengan jeda antar langkah.
 
 Catatan: key yang sudah terpakai `R` (reload) dan `V` (clipboard history). Macro nggak bisa direkam otomatis di AHK v2, jadi ditulis manual di config.
+
+**Panel + Add (urutan kerja, satu langkah satu commit)**
+
+- [x] Tahap 1: Folder + Snippet, simpan ke `custom.ini`, Remove entry, cek bentrok key/trigger.
+- [ ] Tombol **⚙** kecil di strip bawah, di samping **+ Add**. Menunya: Reload script, Open script folder, Edit config.ahk, dan Clear all history (cuma di tab History). Klik kanan area kosong sengaja nggak dipakai.
+- [ ] Tahap 2: tipe **App** dan **Command** di form Add (nama, folder tempat jalan + Browse, command, key opsional). Format keduanya sama, bedanya cuma tab tujuan. Hati-hati tanda kutip ganda di command (dibungkus `-Command "..."`).
+- [ ] Bersihin `config.ahk`: entry lama di-comment (jangan dihapus total, jadi contoh format), termasuk folder `AHK Shortcut (edit)` + key `S` yang diganti tombol ⚙. Yang nggak ikut: item Script bawaan dan baris Roblox Studio dari Open Place.
+- [ ] Tahap 3: tipe **Macro** (sintaks `Send` rawan salah, mungkin perlu tombol Test). Ditunda sampai ada daftar kombinasi yang mau dibikin.
+- Edit entry sengaja ditunda: History pakai ID `Tipe|Nama`, jadi ganti nama memutus History. Remove lalu Add ulang cukup untuk sekarang.

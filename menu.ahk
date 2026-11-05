@@ -8,6 +8,8 @@ state := Map("tab", "Apps", "w", 460, "h", 300)   ; last opened tab + window siz
 
 histFile := A_ScriptDir "\history.ini"   ; last run entries, survives reload and restart
 histMax := 100
+customFile := A_ScriptDir "\custom.ini"   ; entries added from the panel (+ Add), one section per entry
+usedTriggers := Map()                    ; snippet triggers already taken (lowercase)
 placesFile := A_AppData "\com.gztudio.openplace\places.json"   ; place list of the Open Place app (read only)
 history := []                            ; ids ("Type|Label"), newest first
 
@@ -109,7 +111,7 @@ RegisterKey(key, fn, label, scope := "") {
     usedKeys[id] := label
     if scope != ""
         HotIfWinActive(scope)
-    Hotkey("CapsLock & " k, fn)
+    Hotkey("CapsLock & " k, fn, "On")   ; "On" re-enables a key that was switched off by a removed entry
     if scope != ""
         HotIf()   ; back to global hotkeys
 }
@@ -158,6 +160,204 @@ ToggleClick(ms, *) {
     Notice("Auto click ON (" ms " ms)")
 }
 
+; ---------- Entries added from the panel (+ Add), stored in custom.ini ----------
+; One section per entry: [c1] with type=Folder|Snippet, label, value (path or text), key.
+; label and value are saved with a leading "~" so IniRead never strips quotes or spaces.
+
+CustomWrite(sec, name, text) => IniWrite("~" text, customFile, sec, name)
+CustomRead(sec, name) => SubStr(IniRead(customFile, sec, name, "~"), 2)
+
+; Builds the row for one custom entry and claims its key / trigger.
+MakeCustomItem(sec, kind, label, value, key) {
+    if kind = "Folder" {
+        fn := OpenFolder.Bind(value)
+        RegisterKey(key, fn, label)
+        return ["Folder", label, key, fn, Map("path", value, "custom", sec)]
+    }
+    if kind = "Snippet" {
+        usedTriggers[StrLower(label)] := 1
+        Hotstring(":T:" label, value, "On")
+        return ["Snippet", label "  =  " Shorten(value), "", TypeText.Bind(value), Map("text", value, "custom", sec, "trigger", label)]
+    }
+    return ""
+}
+
+LoadCustom() {
+    if !FileExist(customFile)
+        return
+    try names := IniRead(customFile)
+    catch
+        return
+    for sec in StrSplit(names, "`n", "`r") {
+        if sec = ""
+            continue
+        kind := IniRead(customFile, sec, "type", "")
+        label := CustomRead(sec, "label")
+        value := CustomRead(sec, "value")
+        key := CustomRead(sec, "key")
+        if label = "" || value = ""
+            continue
+        row := MakeCustomItem(sec, kind, label, value, key)
+        if row != ""
+            items.Push(row)
+    }
+}
+
+NextCustomId() {
+    n := 1
+    while IniRead(customFile, "c" n, "type", "") != ""
+        n++
+    return "c" n
+}
+
+; Saves a new entry to custom.ini and adds it live (no reload needed)
+AddCustom(kind, label, value, key) {
+    if !FileExist(customFile)
+        FileAppend("", customFile, "UTF-16")   ; Unicode ini, so emoji / accents in snippets and paths survive
+    sec := NextCustomId()
+    IniWrite(kind, customFile, sec, "type")
+    CustomWrite(sec, "label", label)
+    CustomWrite(sec, "value", value)
+    CustomWrite(sec, "key", key)
+    row := MakeCustomItem(sec, kind, label, value, key)
+    items.Push(row)
+    SortItems()
+}
+
+; Removes a custom entry: switches off its key / trigger, deletes it from custom.ini, items and History
+RemoveCustom(it) {
+    meta := it[5]
+    if it[3] != "" {
+        k := StrLower(it[3])
+        if usedKeys.Has(k) && usedKeys[k] = it[2] {   ; only if this entry really owns the key
+            try Hotkey("CapsLock & " k, "Off")
+            usedKeys.Delete(k)
+        }
+    }
+    if meta.Has("trigger") {
+        try Hotstring(":T:" meta["trigger"], , "Off")
+        usedTriggers.Delete(StrLower(meta["trigger"]))
+    }
+    try IniDelete(customFile, meta["custom"])
+    for i, v in items {
+        if v = it {
+            items.RemoveAt(i)
+            break
+        }
+    }
+    RemoveHistory(it)
+}
+
+; The "+ Add" form. Types so far: Folder and Snippet.
+ShowAdd() {
+    static f := ""
+    if IsObject(f)
+        try f.Destroy()
+    f := Gui("+AlwaysOnTop", "Add entry")
+    f.SetFont("s10", "Segoe UI")
+    f.Add("Text", "w320", "Type")
+    ddl := f.Add("DropDownList", "w320 Choose1", ["Folder", "Snippet"])
+    t1 := f.Add("Text", "w320", "")
+    e1 := f.Add("Edit", "w320")
+    t2 := f.Add("Text", "w320", "")
+    e2 := f.Add("Edit", "w320")
+    br := f.Add("Button", "w320", "Browse...")
+    kt := f.Add("Text", "w320", "Key (optional): CapsLock + key")
+    e3 := f.Add("Edit", "w40 Limit1")
+    ok := f.Add("Button", "Default w100 xm", "Add")
+    cancelBtn := f.Add("Button", "x+10 w100", "Cancel")
+
+    ; Labels and visible fields follow the chosen type
+    Sync(*) {
+        folder := ddl.Text = "Folder"
+        t1.Text := folder ? "Name (shown in the menu)" : "Trigger (e.g. `;gm)"
+        t2.Text := folder ? "Folder path" : "Text to type"
+        br.Visible := folder
+        kt.Visible := folder
+        e3.Visible := folder
+    }
+
+    Browse(*) {
+        f.Opt("+OwnDialogs")
+        start := (e2.Value != "" && DirExist(e2.Value)) ? e2.Value : "C:\"
+        p := DirSelect("*" start, 0, "Pick a folder")
+        if p = ""
+            return
+        e2.Value := p
+        if Trim(e1.Value) = "" {
+            SplitPath(p, &nm)
+            e1.Value := nm
+        }
+    }
+
+    Cancel(*) {
+        try f.Destroy()
+        ShowMenu()
+    }
+
+    Save(*) {
+        f.Opt("+OwnDialogs")
+        kind := ddl.Text
+        label := Trim(e1.Value)
+        value := e2.Value
+        key := ""
+        if kind = "Folder" {
+            value := Trim(Trim(value), '"')   ; drop quotes that come with "Copy as path"
+            key := Trim(e3.Value)
+        }
+        if label = "" || value = "" {
+            MsgBox("Please fill in " (kind = "Folder" ? "name and path." : "trigger and text."), "Add entry")
+            return
+        }
+        if kind = "Folder" {
+            if !DirExist(value) {
+                MsgBox("Folder not found:`n" value, "Add entry")
+                return
+            }
+            if key != "" {
+                if !RegExMatch(key, "^[A-Za-z0-9]$") {
+                    MsgBox("Key must be a single letter or digit.", "Add entry")
+                    return
+                }
+                if usedKeys.Has(StrLower(key)) {
+                    MsgBox("CapsLock + " StrUpper(key) " is already used (" usedKeys[StrLower(key)] ").", "Add entry")
+                    return
+                }
+            }
+        } else {
+            if SubStr(label, 1, 1) != ";"
+                label := ";" label
+            if StrLen(label) < 2 || InStr(label, " ") {
+                MsgBox("The trigger can't be empty or contain spaces, e.g. `;gm", "Add entry")
+                return
+            }
+            if usedTriggers.Has(StrLower(label)) {
+                MsgBox("The trigger " label " already exists.", "Add entry")
+                return
+            }
+        }
+        try {
+            AddCustom(kind, label, value, key)
+        } catch as err {
+            MsgBox("Could not save:`n" err.Message, "Add entry")
+            return
+        }
+        try f.Destroy()
+        state["tab"] := kind   ; reopen the menu on the tab of the new entry
+        ShowMenu()
+    }
+
+    ddl.OnEvent("Change", Sync)
+    br.OnEvent("Click", Browse)
+    ok.OnEvent("Click", Save)
+    cancelBtn.OnEvent("Click", Cancel)
+    f.OnEvent("Escape", Cancel)
+    f.OnEvent("Close", Cancel)
+    Sync()
+    f.Show()
+    e1.Focus()
+}
+
 BuildItems() {
     for item in apps {   ; same format as commands, only shown under its own tab
         fn := RunCommand.Bind(item[2], item[3])
@@ -182,8 +382,10 @@ BuildItems() {
     }
     for item in snippets {
         Hotstring(":T:" item[1], item[2])
+        usedTriggers[StrLower(item[1])] := 1
         items.Push(["Snippet", item[1] "  =  " Shorten(item[2]), "", TypeText.Bind(item[2]), Map("cfg", 1, "text", item[2])])
     }
+    LoadCustom()
     LoadPlaces()
     items.Push(["Script", "Edit config.ahk", "", EditConfig, Map()])
     items.Push(["Script", "Clipboard history", "v", (*) => Send("#v"), Map()])   ; hotkey itself lives in main.ahk
@@ -331,6 +533,15 @@ ShowMenu() {
         }
     }
 
+    ; Asks first, then removes an entry that was added from the panel
+    AskRemove(it) {
+        g.Opt("+OwnDialogs")
+        if MsgBox("Remove '" it[2] "'?", "Dev Menu", "YesNo Icon?") = "Yes" {
+            RemoveCustom(it)
+            Fill()
+        }
+    }
+
     ; Right-click on a row: popup menu like the Windows context menu
     ShowRowMenu(row) {
         if !row {   ; blank area: only History has something to offer (clear all)
@@ -359,6 +570,8 @@ ShowMenu() {
             m.Add("Open folder location", (*) => (g.Destroy(), OpenFolder(meta["dir"])))
         if meta.Has("cfg")
             m.Add("Edit config.ahk", (*) => (g.Destroy(), EditConfig()))
+        if meta.Has("custom")
+            m.Add("Remove entry", (*) => AskRemove(it))
         if tabs.Text = "History" {
             m.Add()
             m.Add("Remove from History", (*) => (RemoveHistory(it), Fill()))
@@ -392,7 +605,9 @@ ShowMenu() {
         return NumGet(hti, 12, "Int") + 1   ; iItem is 0-based, -1 = no row -> 0
     }
     lv.OnEvent("ContextMenu", (ctrl, row, isRight, *) => ShowRowMenu(isRight ? RowAt() : row))
-    hint := g.Add("Text", "xm", "Enter / double-click = run     Right-click = more     Esc = close")
+    hint := g.Add("Text", "xm", "Enter = run     Right-click = more     Esc = close")
+    addBtn := g.Add("Button", "w70", "+ Add")
+    addBtn.OnEvent("Click", (*) => (g.Destroy(), ShowAdd()))
     g.Add("Button", "Default Hidden").OnEvent("Click", (*) => RunRow())   ; Enter key
     ; Resize: tab + list follow the window width, list also follows the height, hint stays at the bottom
     OnSize(guiObj, minMax, w, h) {
@@ -402,10 +617,12 @@ ShowMenu() {
         state["h"] := h
         cw := w - 2 * g.MarginX
         hint.GetPos(, , , &hh)
+        addBtn.GetPos(, , &bw, &bh)
         lv.GetPos(, &ly)
         tabs.Move(, , cw)
-        lv.Move(, , cw, h - ly - hh - 2 * g.MarginY)
-        hint.Move(, h - hh - g.MarginY)
+        lv.Move(, , cw, h - ly - bh - 2 * g.MarginY)
+        addBtn.Move(w - bw - g.MarginX, h - bh - g.MarginY)
+        hint.Move(, h - bh - g.MarginY + (bh - hh) // 2)
         FitCols()   ; keep columns fitted to the new width
     }
     g.OnEvent("Size", OnSize)

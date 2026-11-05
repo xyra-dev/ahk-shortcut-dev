@@ -126,15 +126,41 @@ ToggleClick(ms, *) {
 }
 
 ; ---------- Entries added from the panel (+ Add), stored in custom.ini ----------
-; One section per entry: [c1] with type=Command|Folder|Snippet, label, value (command / path / text), key,
-; and dir (the folder a command runs in, Command only). Old type=App entries load as Command.
+; One section per entry: [c1] with type=Command|Folder|Macro|Snippet, label, value (command / path / keys / text), key,
+; dir (the folder a command runs in, Command only) and win ("ahk_exe X", Macro only, empty = works in every app).
+; Old type=App entries load as Command.
 ; label, value and dir are saved with a leading "~" so IniRead never strips quotes or spaces.
+
+; Macro helpers. keys = AHK Send syntax, or "click:100" for the auto clicker (same as macros in config.ahk)
+MacroFn(keys) => RegExMatch(keys, "^click:(\d+)$", &cm) ? ToggleClick.Bind(Integer(cm[1])) : SendMacro.Bind(keys)
+
+; Name shown in the list: label + the app it is limited to, e.g. "Command bar  [RobloxStudioBeta.exe]"
+MacroName(label, win) => win = "" ? label : label "  [" RegExReplace(win, "^ahk_exe ") "]"
+
+; Exe names of the open windows (plus Roblox Studio), A-Z, for the App dropdown of the Macro form
+RunningExes() {
+    seen := Map()
+    seen.CaseSense := "Off"
+    seen["RobloxStudioBeta.exe"] := 1   ; always offered, even when Studio is closed
+    for hwnd in WinGetList() {
+        try {
+            if WinGetTitle(hwnd) = "" || !(WinGetStyle(hwnd) & 0x10000000)   ; skip hidden / untitled windows
+                continue
+            seen[WinGetProcessName(hwnd)] := 1
+        }
+    }
+    list := ""
+    for name in seen
+        list .= name "`n"
+    list := Sort(list, "U")   ; AHK v2: Sort returns the sorted string (no ByRef)
+    return StrSplit(Trim(list, "`n"), "`n")
+}
 
 CustomWrite(sec, name, text) => IniWrite("~" text, customFile, sec, name)
 CustomRead(sec, name) => SubStr(IniRead(customFile, sec, name, "~"), 2)
 
 ; Builds the row for one custom entry and claims its key / trigger.
-MakeCustomItem(sec, kind, label, value, key, dir := "") {
+MakeCustomItem(sec, kind, label, value, key, dir := "", win := "") {
     if kind = "Command" {   ; value = command, dir = folder it runs in
         fn := RunCommand.Bind(dir, value)
         RegisterKey(key, fn, label)
@@ -144,6 +170,11 @@ MakeCustomItem(sec, kind, label, value, key, dir := "") {
         fn := OpenFolder.Bind(value)
         RegisterKey(key, fn, label)
         return ["Folder", label, key, fn, Map("path", value, "custom", sec)]
+    }
+    if kind = "Macro" {   ; value = keys, win = "ahk_exe X" or empty
+        fn := MacroFn(value)
+        RegisterKey(key, fn, label, win)
+        return ["Macro", MacroName(label, win), key, fn, Map("text", value, "custom", sec, "win", win, "label", label)]
     }
     if kind = "Snippet" {
         usedTriggers[StrLower(label)] := 1
@@ -169,9 +200,10 @@ LoadCustom() {
         value := CustomRead(sec, "value")
         key := CustomRead(sec, "key")
         dir := CustomRead(sec, "dir")
+        win := CustomRead(sec, "win")
         if label = "" || value = ""
             continue
-        row := MakeCustomItem(sec, kind, label, value, key, dir)
+        row := MakeCustomItem(sec, kind, label, value, key, dir, win)
         if row != ""
             items.Push(row)
     }
@@ -185,7 +217,7 @@ NextCustomId() {
 }
 
 ; Saves a new entry to custom.ini and adds it live (no reload needed)
-AddCustom(kind, label, value, key, dir := "") {
+AddCustom(kind, label, value, key, dir := "", win := "") {
     if !FileExist(customFile)
         FileAppend("", customFile, "UTF-16")   ; Unicode ini, so emoji / accents in snippets and paths survive
     sec := NextCustomId()
@@ -195,19 +227,87 @@ AddCustom(kind, label, value, key, dir := "") {
     CustomWrite(sec, "key", key)
     if dir != ""
         CustomWrite(sec, "dir", dir)
-    row := MakeCustomItem(sec, kind, label, value, key, dir)
+    if win != ""
+        CustomWrite(sec, "win", win)
+    row := MakeCustomItem(sec, kind, label, value, key, dir, win)
     items.Push(row)
     SortItems()
+    return row
+}
+
+; Writes History to history.ini (same format as AddHistory / RemoveHistory)
+SaveHistory() {
+    try IniDelete(histFile, "History")
+    for i, v in history
+        IniWrite(v, histFile, "History", i)
+}
+
+; Edit = replace: removes the old entry and adds the new one. If saving the new one fails, the old one is put back.
+; History: same Type|Name keeps its place, a renamed entry just loses its old History row.
+ReplaceCustom(old, kind, label, value, key, dir := "", win := "") {
+    sec := old[5]["custom"]
+    snap := Map("kind", IniRead(customFile, sec, "type", ""), "label", CustomRead(sec, "label"), "value", CustomRead(sec, "value"),
+        "key", CustomRead(sec, "key"), "dir", CustomRead(sec, "dir"), "win", CustomRead(sec, "win"))
+    if snap["kind"] = "App"
+        snap["kind"] := "Command"
+    oldId := ItemId(old)
+    pos := 0
+    for i, v in history {
+        if v = oldId {
+            pos := i
+            break
+        }
+    }
+    RemoveCustom(old)
+    try {
+        row := AddCustom(kind, label, value, key, dir, win)
+    } catch as err {
+        AddCustom(snap["kind"], snap["label"], snap["value"], snap["key"], snap["dir"], snap["win"])   ; put the old entry back
+        throw err
+    }
+    if pos && ItemId(row) = oldId {
+        history.InsertAt(Min(pos, history.Length + 1), oldId)
+        SaveHistory()
+    }
+}
+
+; Opens the Add form as an editor for a custom entry (type locked, fields filled in)
+EditCustom(it) {
+    meta := it[5]
+    kind := it[1]
+    vals := Map("key", it[3])
+    if kind = "Command" {
+        vals["name"] := it[2]
+        vals["dir"] := meta["dir"]
+        vals["cmd"] := meta["cmd"]
+    } else if kind = "Folder" {
+        vals["name"] := it[2]
+        vals["dir"] := meta["path"]
+    } else if kind = "Macro" {
+        vals["name"] := meta["label"]
+        vals["keys"] := meta["text"]
+        vals["win"] := RegExReplace(meta["win"], "^ahk_exe ")
+    } else if kind = "Snippet" {
+        vals["trigger"] := meta["trigger"]
+        vals["text"] := meta["text"]
+    }
+    ShowAdd(kind, vals, it)
 }
 
 ; Removes a custom entry: switches off its key / trigger, deletes it from custom.ini, items and History
 RemoveCustom(it) {
     meta := it[5]
     if it[3] != "" {
+        lbl := meta.Has("label") ? meta["label"] : it[2]   ; macros show label + app in it[2], the key is registered under the plain label
+        win := meta.Has("win") ? meta["win"] : ""
         k := StrLower(it[3])
-        if usedKeys.Has(k) && usedKeys[k] = it[2] {   ; only if this entry really owns the key
+        id := win = "" ? k : k "|" win
+        if usedKeys.Has(id) && usedKeys[id] = lbl {   ; only if this entry really owns the key
+            if win != ""
+                HotIfWinActive(win)   ; the app-limited hotkey lives in its own context
             try Hotkey("CapsLock & " k, "Off")
-            usedKeys.Delete(k)
+            HotIf()
+            usedKeys.Delete(id)
         }
     }
     if meta.Has("trigger") {
@@ -225,39 +325,71 @@ RemoveCustom(it) {
 }
 
 ; True if the tab already has an entry with this name (History ids are "Type|Name", so names must be unique per type)
-NameTaken(tab, label) {
-    for it in items
+NameTaken(tab, label, skip := "") {   ; skip = the entry being edited (it may keep its own name)
+    for it in items {
+        if IsObject(skip) && it = skip
+            continue
         if it[1] = tab && it[2] = label
             return true
+    }
     return false
 }
 
-; The "+ Add" form. Types: Command, Folder and Snippet.
+; The "+ Add" form. Types: Command, Folder, Macro and Snippet.
 ; The form is rebuilt from scratch whenever the type changes (just toggling .Visible leaves gaps).
 ; vals carries what was already typed, and the window position, over to the rebuilt form.
-ShowAdd(kind := "", vals := "") {
+ShowAdd(kind := "", vals := "", edit := "") {
     static f := ""
     if IsObject(f)
         try f.Destroy()
     if !IsObject(vals)
         vals := Map()
+    isEdit := IsObject(edit)   ; edit = the entry being edited (opened from the right-click menu)
+    oldKid := ""   ; its current key id and trigger: it may keep them, they don't count as taken
+    oldTrig := ""
+    if isEdit {
+        if edit[3] != "" {
+            ek := StrLower(edit[3])
+            ew := edit[5].Has("win") ? edit[5]["win"] : ""
+            oldKid := ew = "" ? ek : ek "|" ew
+        }
+        if edit[5].Has("trigger")
+            oldTrig := StrLower(edit[5]["trigger"])
+    }
     if kind = ""   ; open on the type that matches the current tab
-        kind := Map("Command", "Command", "Folder", "Folder", "Snippet", "Snippet").Get(state["tab"], "Command")
+        kind := Map("Command", "Command", "Folder", "Folder", "Macro", "Macro", "Snippet", "Snippet").Get(state["tab"], "Command")
     tabName := kind   ; tab (= item type) the new entry ends up in
     isSnip := kind = "Snippet"
     isCmd := kind = "Command"
+    isMac := kind = "Macro"
 
-    f := Gui("+AlwaysOnTop", "Add entry")
+    f := Gui("+AlwaysOnTop", isEdit ? "Edit entry" : "Add entry")
     f.SetFont("s10", "Segoe UI")
     f.Add("Text", "w320", "Type")
-    ddl := f.Add("DropDownList", "w320", ["Command", "Folder", "Snippet"])
+    ddl := f.Add("DropDownList", "w320", ["Command", "Folder", "Macro", "Snippet"])
     ddl.Choose(kind)
-    eName := eDir := eCmd := eKey := eTrig := eText := br := ""
+    if isEdit
+        ddl.Enabled := false   ; the type of an existing entry can't change
+    eName := eDir := eCmd := eKey := eTrig := eText := br := eKeys := eWin := tst := recBtn := ""
+    rec := Map()   ; holds the active InputHook while the Record button is listening
     if isSnip {   ; Snippet: Trigger -> Text
         f.Add("Text", "w320", "Trigger (e.g. `;gm)")
         eTrig := f.Add("Edit", "w320", vals.Get("trigger", ""))
         f.Add("Text", "w320", "Text to type")
         eText := f.Add("Edit", "w320", vals.Get("text", ""))
+    } else if isMac {   ; Macro: Name -> Keys (+ Test) -> App -> Key
+        f.Add("Text", "w320", "Name (shown in the menu)")
+        eName := f.Add("Edit", "w320", vals.Get("name", ""))
+        f.Add("Text", "w320", "Keys to send (AHK Send syntax)")
+        eKeys := f.Add("Edit", "w320", vals.Get("keys", ""))
+        f.Add("Text", "w320 cGray", "^ Ctrl   + Shift   ! Alt   # Win   {Enter} {Tab} {Left 3}")
+        tst := f.Add("Button", "w155", "Test (sends after 3 s)")
+        recBtn := f.Add("Button", "x+10 w155", "Record keys")
+        f.Add("Text", "xm w320", "App (optional): only works in this app")
+        eWin := f.Add("ComboBox", "w320", RunningExes())   ; open apps + Roblox Studio, or type an exe name
+        eWin.Text := vals.Get("win", "")
+        f.Add("Text", "w320", "Key (optional): CapsLock + key")
+        eKey := f.Add("Edit", "w40 Limit1", vals.Get("key", ""))
     } else {   ; Folder: Name -> Folder -> Key.  App / Command: Name -> Folder -> Command -> Key
         f.Add("Text", "w320", "Name (shown in the menu)")
         eName := f.Add("Edit", "w320", vals.Get("name", ""))
@@ -271,7 +403,7 @@ ShowAdd(kind := "", vals := "") {
         f.Add("Text", "w320", "Key (optional): CapsLock + key")
         eKey := f.Add("Edit", "w40 Limit1", vals.Get("key", ""))
     }
-    ok := f.Add("Button", "Default w100 xm", "Add")
+    ok := f.Add("Button", "Default w100 xm", isEdit ? "Save" : "Add")
     cancelBtn := f.Add("Button", "x+10 w100", "Cancel")
 
     ; Remembers the typed values + window position before the form is rebuilt for another type
@@ -279,6 +411,11 @@ ShowAdd(kind := "", vals := "") {
         if isSnip {
             vals["trigger"] := eTrig.Value
             vals["text"] := eText.Value
+        } else if isMac {
+            vals["name"] := eName.Value
+            vals["keys"] := eKeys.Value
+            vals["win"] := eWin.Text
+            vals["key"] := eKey.Value
         } else {
             vals["name"] := eName.Value
             vals["dir"] := eDir.Value
@@ -304,7 +441,72 @@ ShowAdd(kind := "", vals := "") {
         }
     }
 
+    ; Hides the form, gives you 3 seconds to switch to the target app, then sends the keys there
+    TestKeys(*) {
+        f.Opt("+OwnDialogs")
+        keys := Trim(eKeys.Value)
+        if keys = "" {
+            MsgBox("Type the keys first.", "Add entry")
+            return
+        }
+        if RegExMatch(keys, "i)^click:")
+            return MsgBox("Auto click can't be tested here. Save it and use the shortcut.", "Add entry")
+        f.Hide()
+        loop 3 {
+            ToolTip("Sending in " (4 - A_Index) "... switch to the target app")
+            Sleep(1000)
+        }
+        ToolTip()
+        try {
+            Send(keys)
+        } catch as err {
+            f.Show()
+            MsgBox("These keys are not valid:`n" err.Message, "Add entry")
+            return
+        }
+        f.Show()
+    }
+
+    ; Stops listening for the Record button and resets its label
+    StopRec() {
+        if rec.Has("ih") {
+            try rec["ih"].Stop()
+            rec.Delete("ih")
+        }
+        if IsObject(recBtn)
+            try recBtn.Text := "Record keys"
+    }
+
+    ; Called for every key press while recording: the first non-modifier key finishes it and writes the combo
+    ; to Keys in Send syntax (Ctrl+Alt+Shift+C -> ^!+c). Esc alone cancels.
+    RecKey(ih, vk, sc) {
+        name := GetKeyName(Format("vk{:02X}sc{:03X}", vk, sc))
+        if RegExMatch(name, "i)^(L|R)?(Control|Ctrl|Shift|Alt|Win)$")   ; modifier alone: keep waiting
+            return
+        mods := (GetKeyState("Ctrl", "P") ? "^" : "") (GetKeyState("Alt", "P") ? "!" : "") (GetKeyState("Shift", "P") ? "+" : "") (GetKeyState("LWin", "P") || GetKeyState("RWin", "P") ? "#" : "")
+        StopRec()
+        if name = "Escape" && mods = ""
+            return
+        key := (StrLen(name) = 1 && !InStr("^+!#{}", name)) ? StrLower(name) : "{" name "}"   ; letters plain, special keys in braces
+        eKeys.Value := mods key
+        eKeys.Focus()
+    }
+
+    Record(*) {
+        if rec.Has("ih") {   ; clicking again cancels
+            StopRec()
+            return
+        }
+        recBtn.Text := "Press combo... (Esc)"
+        ih := InputHook()
+        ih.KeyOpt("{All}", "NS")   ; notify on every key and keep it from reaching the form
+        ih.OnKeyDown := RecKey
+        ih.Start()
+        rec["ih"] := ih
+    }
+
     Cancel(*) {
+        StopRec()
         try f.Destroy()
         ShowMenu()
     }
@@ -313,6 +515,7 @@ ShowAdd(kind := "", vals := "") {
         f.Opt("+OwnDialogs")
         dir := ""
         key := ""
+        win := ""
         if isSnip {
             label := Trim(eTrig.Value)
             value := eText.Value
@@ -326,9 +529,46 @@ ShowAdd(kind := "", vals := "") {
                 MsgBox("The trigger can't be empty or contain spaces, e.g. `;gm", "Add entry")
                 return
             }
-            if usedTriggers.Has(StrLower(label)) {
+            if usedTriggers.Has(StrLower(label)) && StrLower(label) != oldTrig {
                 MsgBox("The trigger " label " already exists.", "Add entry")
                 return
+            }
+        } else if isMac {
+            label := Trim(eName.Value)
+            value := Trim(eKeys.Value)
+            key := Trim(eKey.Value)
+            exe := Trim(eWin.Text)
+            if label = "" || value = "" {
+                MsgBox("Please fill in name and keys.", "Add entry")
+                return
+            }
+            if RegExMatch(value, "\R") {
+                MsgBox("The keys must be a single line.", "Add entry")
+                return
+            }
+            if RegExMatch(value, "i)^click:") && !RegExMatch(value, "i)^click:\d+$") {
+                MsgBox("Auto click format is click:100 (milliseconds).", "Add entry")
+                return
+            }
+            if exe != "" && !RegExMatch(exe, 'i)^[^\\/:*?"<>|]+\.exe$') {
+                MsgBox("App must be an exe name, e.g. RobloxStudioBeta.exe", "Add entry")
+                return
+            }
+            win := exe = "" ? "" : "ahk_exe " exe
+            if NameTaken(tabName, MacroName(label, win), edit) {
+                MsgBox("There is already a Macro named '" MacroName(label, win) "'.", "Add entry")
+                return
+            }
+            if key != "" {
+                if !RegExMatch(key, "^[A-Za-z0-9]$") {
+                    MsgBox("Key must be a single letter or digit.", "Add entry")
+                    return
+                }
+                kid := win = "" ? StrLower(key) : StrLower(key) "|" win   ; same key is fine in different apps
+                if usedKeys.Has(kid) && kid != oldKid {
+                    MsgBox("CapsLock + " StrUpper(key) (win = "" ? "" : " in " exe) " is already used (" usedKeys[kid] ").", "Add entry")
+                    return
+                }
             }
         } else {
             label := Trim(eName.Value)
@@ -347,7 +587,7 @@ ShowAdd(kind := "", vals := "") {
                 MsgBox("Folder not found:`n" dir, "Add entry")
                 return
             }
-            if NameTaken(tabName, label) {
+            if NameTaken(tabName, label, edit) {
                 MsgBox("There is already a " kind " named '" label "'.", "Add entry")
                 return
             }
@@ -356,26 +596,34 @@ ShowAdd(kind := "", vals := "") {
                     MsgBox("Key must be a single letter or digit.", "Add entry")
                     return
                 }
-                if usedKeys.Has(StrLower(key)) {
+                if usedKeys.Has(StrLower(key)) && StrLower(key) != oldKid {
                     MsgBox("CapsLock + " StrUpper(key) " is already used (" usedKeys[StrLower(key)] ").", "Add entry")
                     return
                 }
             }
         }
         try {
-            AddCustom(kind, label, value, key, isCmd ? dir : "")
+            if isEdit
+                ReplaceCustom(edit, kind, label, value, key, isCmd ? dir : "", win)
+            else
+                AddCustom(kind, label, value, key, isCmd ? dir : "", win)
         } catch as err {
             MsgBox("Could not save:`n" err.Message, "Add entry")
             return
         }
+        StopRec()
         try f.Destroy()
         state["tab"] := tabName   ; reopen the menu on the tab of the new entry
         ShowMenu()
     }
 
-    ddl.OnEvent("Change", (*) => (Collect(), ShowAdd(ddl.Text, vals)))   ; rebuild the form for the new type
+    ddl.OnEvent("Change", (*) => (StopRec(), Collect(), ShowAdd(ddl.Text, vals, edit)))   ; rebuild the form for the new type
     if IsObject(br)
         br.OnEvent("Click", Browse)
+    if IsObject(tst)
+        tst.OnEvent("Click", TestKeys)
+    if IsObject(recBtn)
+        recBtn.OnEvent("Click", Record)
     ok.OnEvent("Click", Save)
     cancelBtn.OnEvent("Click", Cancel)
     f.OnEvent("Escape", Cancel)
@@ -590,8 +838,10 @@ ShowMenu() {
             m.Add("Open folder location", (*) => (g.Destroy(), OpenFolder(meta["dir"])))
         if meta.Has("cfg")
             m.Add("Edit config.ahk", (*) => (g.Destroy(), EditConfig()))
-        if meta.Has("custom")
+        if meta.Has("custom") {
+            m.Add("Edit entry", (*) => (g.Destroy(), EditCustom(it)))
             m.Add("Remove entry", (*) => AskRemove(it))
+        }
         if tabs.Text = "History" {
             m.Add()
             m.Add("Remove from History", (*) => (RemoveHistory(it), Fill()))

@@ -23,6 +23,17 @@ OpenFolder(path, *) {
     }
 }
 
+; Opens an app without a terminal window. args = optional command-line arguments.
+; Runs from the file's own folder (so apps that look for files next to the exe still work), except .lnk which keeps its own start folder.
+RunApp(file, args, *) {
+    SplitPath(file, , &dir, &ext)
+    try {
+        Run('"' file '"' (args = "" ? "" : " " args), StrLower(ext) = "lnk" ? "" : dir)
+    } catch as err {
+        MsgBox("Could not open:`n" file "`n`n" err.Message, "Dev Menu")
+    }
+}
+
 ; PowerShell -EncodedCommand wants base64 of the UTF-16 text, so quotes and special characters in a command can't break the command line
 EncodePS(text) {
     n := StrPut(text, "UTF-16")   ; characters incl. the terminating null
@@ -121,11 +132,17 @@ CustomWrite(sec, name, text) => IniWrite("~" text, customFile, sec, name)
 CustomRead(sec, name) => SubStr(IniRead(customFile, sec, name, "~"), 2)
 
 ; Builds the row for one custom entry and claims its key / trigger.
-MakeCustomItem(sec, kind, label, value, key, dir := "", win := "") {
+MakeCustomItem(sec, kind, label, value, key, dir := "", win := "", args := "") {
     if kind = "Command" {   ; value = command, dir = folder it runs in
         fn := RunCommand.Bind(dir, value)
         RegisterKey(key, fn, label)
         return ["Command", label, key, fn, Map("dir", dir, "cmd", value, "custom", sec)]
+    }
+    if kind = "App" {   ; value = file (.exe / .lnk / .bat), args = optional arguments
+        fn := RunApp.Bind(value, args)
+        RegisterKey(key, fn, label)
+        SplitPath(value, , &fd)
+        return ["App", label, key, fn, Map("path", value, "dir", fd, "args", args, "custom", sec)]
     }
     if kind = "Folder" {
         fn := OpenFolder.Bind(value)
@@ -155,16 +172,17 @@ LoadCustom() {
         if sec = ""
             continue
         kind := IniRead(customFile, sec, "type", "")
-        if kind = "App"   ; the App type was removed, old entries become Commands
+        if kind = "App" && CustomRead(sec, "dir") != ""   ; old App entries have a folder and are Commands; the current App type has none
             kind := "Command"
         label := CustomRead(sec, "label")
         value := CustomRead(sec, "value")
         key := CustomRead(sec, "key")
         dir := CustomRead(sec, "dir")
         win := CustomRead(sec, "win")
+        args := CustomRead(sec, "args")
         if label = "" || value = ""
             continue
-        row := MakeCustomItem(sec, kind, label, value, key, dir, win)
+        row := MakeCustomItem(sec, kind, label, value, key, dir, win, args)
         if row != ""
             items.Push(row)
     }
@@ -178,7 +196,7 @@ NextCustomId() {
 }
 
 ; Saves a new entry to custom.ini and adds it live (no reload needed)
-AddCustom(kind, label, value, key, dir := "", win := "") {
+AddCustom(kind, label, value, key, dir := "", win := "", args := "") {
     if !FileExist(customFile)
         FileAppend("", customFile, "UTF-16")   ; Unicode ini, so emoji / accents in snippets and paths survive
     sec := NextCustomId()
@@ -190,7 +208,9 @@ AddCustom(kind, label, value, key, dir := "", win := "") {
         CustomWrite(sec, "dir", dir)
     if win != ""
         CustomWrite(sec, "win", win)
-    row := MakeCustomItem(sec, kind, label, value, key, dir, win)
+    if args != ""
+        CustomWrite(sec, "args", args)
+    row := MakeCustomItem(sec, kind, label, value, key, dir, win, args)
     items.Push(row)
     SortItems()
     return row
@@ -205,11 +225,11 @@ SaveHistory() {
 
 ; Edit = replace: removes the old entry and adds the new one. If saving the new one fails, the old one is put back.
 ; History: same Type|Name keeps its place, a renamed entry just loses its old History row.
-ReplaceCustom(old, kind, label, value, key, dir := "", win := "") {
+ReplaceCustom(old, kind, label, value, key, dir := "", win := "", args := "") {
     sec := old[5]["custom"]
     snap := Map("kind", IniRead(customFile, sec, "type", ""), "label", CustomRead(sec, "label"), "value", CustomRead(sec, "value"),
-        "key", CustomRead(sec, "key"), "dir", CustomRead(sec, "dir"), "win", CustomRead(sec, "win"))
-    if snap["kind"] = "App"
+        "key", CustomRead(sec, "key"), "dir", CustomRead(sec, "dir"), "win", CustomRead(sec, "win"), "args", CustomRead(sec, "args"))
+    if snap["kind"] = "App" && snap["dir"] != ""
         snap["kind"] := "Command"
     oldId := ItemId(old)
     pos := 0
@@ -221,9 +241,9 @@ ReplaceCustom(old, kind, label, value, key, dir := "", win := "") {
     }
     RemoveCustom(old)
     try {
-        row := AddCustom(kind, label, value, key, dir, win)
+        row := AddCustom(kind, label, value, key, dir, win, args)
     } catch as err {
-        AddCustom(snap["kind"], snap["label"], snap["value"], snap["key"], snap["dir"], snap["win"])   ; put the old entry back
+        AddCustom(snap["kind"], snap["label"], snap["value"], snap["key"], snap["dir"], snap["win"], snap["args"])   ; put the old entry back
         throw err
     }
     if pos && ItemId(row) = oldId {
@@ -248,6 +268,10 @@ EditCustom(it) {
         vals["name"] := meta["label"]
         vals["keys"] := meta["text"]
         vals["win"] := RegExReplace(meta["win"], "^ahk_exe ")
+    } else if kind = "App" {
+        vals["name"] := it[2]
+        vals["file"] := meta["path"]
+        vals["args"] := meta["args"]
     } else if kind = "Snippet" {
         vals["trigger"] := meta["trigger"]
         vals["text"] := meta["text"]
@@ -318,20 +342,21 @@ ShowAdd(kind := "", vals := "", edit := "") {
             oldTrig := StrLower(edit[5]["trigger"])
     }
     if kind = ""   ; open on the type that matches the current tab
-        kind := Map("Command", "Command", "Folder", "Folder", "Macro", "Macro", "Snippet", "Snippet").Get(state["tab"], "Command")
+        kind := Map("App", "App", "Command", "Command", "Folder", "Folder", "Macro", "Macro", "Snippet", "Snippet").Get(state["tab"], "Command")
     tabName := kind   ; tab (= item type) the new entry ends up in
     isSnip := kind = "Snippet"
     isCmd := kind = "Command"
     isMac := kind = "Macro"
+    isApp := kind = "App"
 
     f := Gui("+AlwaysOnTop", isEdit ? "Edit entry" : "Add entry")
     f.SetFont("s10", "Segoe UI")
     f.Add("Text", "w320", "Type")
-    ddl := f.Add("DropDownList", "w320", ["Command", "Folder", "Macro", "Snippet"])
+    ddl := f.Add("DropDownList", "w320", ["App", "Command", "Folder", "Macro", "Snippet"])
     ddl.Choose(kind)
     if isEdit
         ddl.Enabled := false   ; the type of an existing entry can't change
-    eName := eDir := eCmd := eKey := eTrig := eText := br := eKeys := eWin := tst := recBtn := ""
+    eName := eDir := eCmd := eKey := eTrig := eText := br := eKeys := eWin := tst := recBtn := eFile := eArgs := ""
     rec := Map()   ; holds the active InputHook while the Record button is listening
     if isSnip {   ; Snippet: Trigger -> Text
         f.Add("Text", "w320", "Trigger (e.g. `;gm)")
@@ -351,7 +376,17 @@ ShowAdd(kind := "", vals := "", edit := "") {
         eWin.Text := vals.Get("win", "")
         f.Add("Text", "w320", "Key (optional): CapsLock + key")
         eKey := f.Add("Edit", "w40 Limit1", vals.Get("key", ""))
-    } else {   ; Folder: Name -> Folder -> Key.  App / Command: Name -> Folder -> Command -> Key
+    } else if isApp {   ; App: Name -> File (+ Browse) -> Arguments -> Key
+        f.Add("Text", "w320", "Name (shown in the menu)")
+        eName := f.Add("Edit", "w320", vals.Get("name", ""))
+        f.Add("Text", "w320", "File (.exe / .lnk / .bat)")
+        eFile := f.Add("Edit", "w320", vals.Get("file", ""))
+        br := f.Add("Button", "w320", "Browse...")
+        f.Add("Text", "w320", "Arguments (optional)")
+        eArgs := f.Add("Edit", "w320", vals.Get("args", ""))
+        f.Add("Text", "w320", "Key (optional): CapsLock + key")
+        eKey := f.Add("Edit", "w40 Limit1", vals.Get("key", ""))
+    } else {   ; Folder: Name -> Folder -> Key.  Command: Name -> Folder -> Command -> Key
         f.Add("Text", "w320", "Name (shown in the menu)")
         eName := f.Add("Edit", "w320", vals.Get("name", ""))
         f.Add("Text", "w320", kind = "Folder" ? "Folder path" : "Folder to run in")
@@ -377,6 +412,11 @@ ShowAdd(kind := "", vals := "", edit := "") {
             vals["keys"] := eKeys.Value
             vals["win"] := eWin.Text
             vals["key"] := eKey.Value
+        } else if isApp {
+            vals["name"] := eName.Value
+            vals["file"] := eFile.Value
+            vals["args"] := eArgs.Value
+            vals["key"] := eKey.Value
         } else {
             vals["name"] := eName.Value
             vals["dir"] := eDir.Value
@@ -391,6 +431,17 @@ ShowAdd(kind := "", vals := "", edit := "") {
 
     Browse(*) {
         f.Opt("+OwnDialogs")
+        if isApp {   ; pick a file (exe / lnk / bat), the name is filled from the file name if still empty
+            p := FileSelect(3, FileExist(eFile.Value) ? eFile.Value : A_ProgramFiles, "Pick an app", "Programs (*.exe; *.lnk; *.bat; *.cmd)")
+            if p = ""
+                return
+            eFile.Value := p
+            if Trim(eName.Value) = "" {
+                SplitPath(p, , , , &nm)   ; file name without extension
+                eName.Value := nm
+            }
+            return
+        }
         start := (eDir.Value != "" && DirExist(eDir.Value)) ? eDir.Value : (DirExist("C:\Dev_Ex") ? "C:\Dev_Ex" : "C:\")
         p := FileSelect("D", start, "Pick a folder")   ; "D" = modern Explorer-style folder picker (resizable, address bar)
         if p = ""
@@ -475,6 +526,7 @@ ShowAdd(kind := "", vals := "", edit := "") {
         dir := ""
         key := ""
         win := ""
+        args := ""
         if isSnip {
             label := Trim(eTrig.Value)
             value := eText.Value
@@ -525,6 +577,33 @@ ShowAdd(kind := "", vals := "", edit := "") {
                     return
                 }
             }
+        } else if isApp {
+            label := Trim(eName.Value)
+            value := Trim(Trim(eFile.Value), '"')   ; drop quotes that come with "Copy as path"
+            args := Trim(eArgs.Value)
+            key := Trim(eKey.Value)
+            if label = "" || value = "" {
+                MsgBox("Please fill in name and file.", "Add entry")
+                return
+            }
+            if !FileExist(value) || DirExist(value) {
+                MsgBox("File not found:`n" value, "Add entry")
+                return
+            }
+            if NameTaken(tabName, label, edit) {
+                MsgBox("There is already an App named '" label "'.", "Add entry")
+                return
+            }
+            if key != "" {
+                if !RegExMatch(key, "^[A-Za-z0-9]$") {
+                    MsgBox("Key must be a single letter or digit.", "Add entry")
+                    return
+                }
+                if usedKeys.Has(StrLower(key)) && StrLower(key) != oldKid {
+                    MsgBox("CapsLock + " StrUpper(key) " is already used (" usedKeys[StrLower(key)] ").", "Add entry")
+                    return
+                }
+            }
         } else {
             label := Trim(eName.Value)
             dir := Trim(Trim(eDir.Value), '"')   ; drop quotes that come with "Copy as path"
@@ -559,9 +638,9 @@ ShowAdd(kind := "", vals := "", edit := "") {
         }
         try {
             if isEdit
-                ReplaceCustom(edit, kind, label, value, key, isCmd ? dir : "", win)
+                ReplaceCustom(edit, kind, label, value, key, isCmd ? dir : "", win, args)
             else
-                AddCustom(kind, label, value, key, isCmd ? dir : "", win)
+                AddCustom(kind, label, value, key, isCmd ? dir : "", win, args)
         } catch as err {
             MsgBox("Could not save:`n" err.Message, "Add entry")
             return
@@ -703,7 +782,7 @@ ShowMenu() {
         g.Destroy()
     g := Gui("+AlwaysOnTop +Resize -MinimizeBox -MaximizeBox +MinSize460x300", "Dev Menu")   ; -MaximizeBox must come after +Resize (Resize re-enables it)
     g.SetFont("s10", "Segoe UI")
-    tabs := g.Add("Tab3", "w580 h28", ["History", "Command", "Folder", "Macro", "Snippet"])
+    tabs := g.Add("Tab3", "w580 h28", ["History", "App", "Command", "Folder", "Macro", "Snippet"])
     tabs.UseTab()   ; controls below are outside the tab, so the list isn't clipped inside it
     lv := g.Add("ListView", "r14 w580 -Multi NoSort", ["Name", "Shortcut", "Type"])
     shown := []   ; rows currently in the list (same order), so row number -> item

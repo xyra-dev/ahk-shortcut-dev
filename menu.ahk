@@ -2,7 +2,7 @@
 ; Menu engine: builds the CapsLock + right click window (Gui + ListView) and registers
 ; every hotkey and hotstring from config.ahk. Normally you don't edit this file.
 
-usedKeys := Map("r", "reload", "v", "clipboard history")   ; keys already taken (CapsLock + R / V, see main.ahk)
+usedKeys := Map()                ; keys already taken by CapsLock + key (config.ahk and panel entries), lowercase
 items := []                      ; rows of the window: [type, label, key, action]
 state := Map("tab", "Command", "w", 460, "h", 300)   ; last opened tab + window size (kept while the script runs; resets on reload)
 
@@ -610,9 +610,6 @@ BuildItems() {
         items.Push(["Snippet", item[1] "  =  " Shorten(item[2]), "", TypeText.Bind(item[2]), Map("cfg", 1, "text", item[2])])
     }
     LoadCustom()
-    items.Push(["Script", "Edit config.ahk", "", EditConfig, Map()])
-    items.Push(["Script", "Clipboard history", "v", (*) => Send("#v"), Map()])   ; hotkey itself lives in main.ahk
-    items.Push(["Script", "Reload script", "r", (*) => Reload(), Map()])
 }
 
 BuildItems()
@@ -706,7 +703,7 @@ ShowMenu() {
         g.Destroy()
     g := Gui("+AlwaysOnTop +Resize -MinimizeBox -MaximizeBox +MinSize460x300", "Dev Menu")   ; -MaximizeBox must come after +Resize (Resize re-enables it)
     g.SetFont("s10", "Segoe UI")
-    tabs := g.Add("Tab3", "w580 h28", ["History", "Command", "Folder", "Macro", "Script", "Snippet"])
+    tabs := g.Add("Tab3", "w580 h28", ["History", "Command", "Folder", "Macro", "Snippet"])
     tabs.UseTab()   ; controls below are outside the tab, so the list isn't clipped inside it
     lv := g.Add("ListView", "r14 w580 -Multi NoSort", ["Name", "Shortcut", "Type"])
     shown := []   ; rows currently in the list (same order), so row number -> item

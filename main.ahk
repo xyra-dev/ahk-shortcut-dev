@@ -10,6 +10,3 @@ SetCapsLockState "AlwaysOff"   ; CapsLock no longer toggles caps (use Shift inst
 ; Order matters: config first (data), then menu (engine with startup code)
 #Include "config.ahk"
 #Include "menu.ahk"
-
-CapsLock & r:: Reload   ; reload script after editing
-CapsLock & v:: Send "#v"   ; open Windows clipboard history (same as Win + V)

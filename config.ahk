@@ -1,10 +1,10 @@
 
 ; CONFIG: the only file you edit to add or change menu items.
-; After editing, reload with CapsLock + R.
+; After editing, reload from the menu (right-click empty panel space > Reload script).
 ;
 ; Every entry can end with an optional key: CapsLock + key then opens/runs it directly.
 ; Entries without a key only appear in the CapsLock + right click menu.
-; Reserved keys: R (reload). Right click is the menu itself.
+; Right click is the menu itself.
 
 ; ["Label", "Folder path", "key (optional)"]
 folders := []

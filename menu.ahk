@@ -23,14 +23,70 @@ OpenFolder(path, *) {
     }
 }
 
+; Process name (e.g. "firefox.exe") used to find the app's window. "" = unknown, then the app is only started.
+; .lnk: reads the shortcut's target. Squirrel launchers (Discord, Slack...) start the real exe through Update.exe --processStart X.exe.
+AppExe(file, args) {
+    target := file
+    all := args
+    SplitPath(file, , , &ext)
+    if StrLower(ext) = "lnk" {
+        try
+            FileGetShortcut(file, &target, , &lnkArgs)
+        catch
+            return ""
+        all := lnkArgs " " args
+    }
+    SplitPath(target, &exeName, , &tExt)
+    if StrLower(tExt) != "exe"   ; .bat / .cmd, or a shortcut without a readable target
+        return ""
+    if exeName = "Update.exe" && RegExMatch(all, 'i)--processStart(?:AndWait)?[ =]+"?([^\s"]+\.exe)', &m)
+        return m[1]
+    if RegExMatch(exeName, "i)^(explorer|cmd|powershell|pwsh|wscript|cscript|rundll32)\.exe$")   ; generic hosts: their windows aren't the app
+        return ""
+    return exeName
+}
+
+; First real window (visible, with a title, not a tool window) of the process, 0 if there is none
+AppWindow(exe) {
+    for hwnd in WinGetList("ahk_exe " exe) {
+        try {
+            if WinGetTitle(hwnd) != "" && !(WinGetExStyle(hwnd) & 0x80)   ; 0x80 = WS_EX_TOOLWINDOW
+                return hwnd
+        }
+    }
+    return 0
+}
+
+ShowWin(hwnd) {
+    if WinGetMinMax(hwnd) = -1
+        WinRestore(hwnd)
+    WinActivate(hwnd)
+}
+
 ; Opens an app without a terminal window. args = optional command-line arguments.
-; Runs from the file's own folder (so apps that look for files next to the exe still work), except .lnk which keeps its own start folder.
+; Already running: its window comes to the front (restored if minimized), no second instance is started.
+; Not running: it is started from the file's own folder (.lnk keeps its own start folder), and the new window is brought to the front
+; once it shows up (Windows would otherwise leave it behind the other windows).
 RunApp(file, args, *) {
     SplitPath(file, , &dir, &ext)
+    exe := AppExe(file, args)
+    if exe != "" {
+        hwnd := AppWindow(exe)
+        if hwnd {
+            ShowWin(hwnd)
+            return
+        }
+    }
     try {
         Run('"' file '"' (args = "" ? "" : " " args), StrLower(ext) = "lnk" ? "" : dir)
     } catch as err {
         MsgBox("Could not open:`n" file "`n`n" err.Message, "Dev Menu")
+        return
+    }
+    if exe != "" {
+        hwnd := WinWait("ahk_exe " exe, , 10)
+        if hwnd
+            ShowWin(hwnd)
     }
 }
 

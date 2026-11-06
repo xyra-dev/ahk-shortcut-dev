@@ -65,14 +65,19 @@ ShowWin(hwnd) {
 
 ; Opens an app without a terminal window. args = optional command-line arguments.
 ; Already running: its window comes to the front (restored if minimized), no second instance is started.
+; Pressing the CapsLock + key shortcut again while the app is already in front minimizes it (toggle).
 ; Not running: it is started from the file's own folder (.lnk keeps its own start folder), and the new window is brought to the front
 ; once it shows up (Windows would otherwise leave it behind the other windows).
-RunApp(file, args, *) {
+RunApp(file, args, trigger := "") {   ; trigger = hotkey name when it comes from CapsLock + key (empty when run from the panel)
     SplitPath(file, , &dir, &ext)
     exe := AppExe(file, args)
     if exe != "" {
         hwnd := AppWindow(exe)
         if hwnd {
+            if trigger != "" && WinActive(hwnd) {   ; shortcut pressed again while the app is in front: minimize (toggle). Not from the panel, there it would minimize the app you just came from
+                WinMinimize(hwnd)
+                return
+            }
             ShowWin(hwnd)
             return
         }

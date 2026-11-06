@@ -8,6 +8,7 @@ state := Map("tab", "Command", "w", 460, "h", 300)   ; last opened tab + window 
 
 histFile := A_ScriptDir "\history.ini"   ; last run entries, survives reload and restart
 histMax := 100
+SetWinDelay -1   ; no automatic 100 ms pause after each window command (minimize / restore / activate), so an app shortcut pressed twice quickly toggles right away
 customFile := A_ScriptDir "\custom.ini"   ; entries added from the panel (+ Add), one section per entry
 usedTriggers := Map()                    ; snippet triggers already taken (lowercase)
 history := []                            ; ids ("Type|Label"), newest first
@@ -74,7 +75,7 @@ RunApp(file, args, trigger := "") {   ; trigger = hotkey name when it comes from
     if exe != "" {
         hwnd := AppWindow(exe)
         if hwnd {
-            if trigger != "" && WinActive(hwnd) {   ; shortcut pressed again while the app is in front: minimize (toggle). Not from the panel, there it would minimize the app you just came from
+            if trigger != "" && WinActive(hwnd) && WinGetMinMax(hwnd) != -1 {   ; shortcut pressed again while the app is in front: minimize (toggle). Not from the panel, there it would minimize the app you just came from. A minimized window can still report as active for a moment, hence the MinMax check
                 WinMinimize(hwnd)
                 return
             }

@@ -53,6 +53,7 @@ Dengan key `b`, `CapsLock + B` langsung buka folder, dan menu nampilin hint-nya.
 - Jendela muncul **setelah klik kanan dilepas** (`KeyWait`), supaya lepasnya klik nggak kepencet ke baris.
 - Terminal pakai PowerShell `-NoExit` + `-ExecutionPolicy Bypass` supaya output/error tetap kelihatan dan script `.ps1`/`npm` bisa jalan. Command dikirim lewat `-EncodedCommand` (base64), jadi tanda kutip ganda dan karakter aneh di command aman. Baris pertama jendela (abu-abu, `> command`) menunjukkan apa yang dijalankan.
 - "Edit config.ahk" dan "Reload script" ada di menu klik kanan area kosong panel (tab Script sudah dihapus).
+- Toggle minimize di tipe App: jendela yang baru di-minimize bisa masih terbaca "aktif" oleh Windows beberapa detik, jadi syaratnya dua: jendela aktif **dan** belum minimize (`WinGetMinMax`). Tanpa syarat kedua, tekanan berikutnya cuma minimize berulang dan restore baru jalan setelah jeda. `SetWinDelay -1` (di atas `menu.ahk`) mematikan jeda 100 ms otomatis AHK setelah perintah jendela.
 
 ## Perilaku jendela (`menu.ahk`, fungsi `ShowMenu`)
 

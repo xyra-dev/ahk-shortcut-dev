@@ -1,5 +1,45 @@
 # AHK Shortcut Dev
 
+A keyboard-driven launcher, macro and snippet panel for Windows, written in [AutoHotkey v2](https://www.autohotkey.com/).
+
+Hold **CapsLock** and right-click to open one panel that can launch apps, open folders, run terminal commands, send recorded key combos and expand text snippets. CapsLock is used as the "leader" key, so none of the shortcuts clash with the built-in shortcuts of other apps.
+
+## Features
+
+- **One panel, six tabs**: History, App, Command, Folder, Macro and Snippet. Pick with the arrow keys or the mouse, run with Enter or double-click.
+- **Direct shortcuts**: give any entry a letter and `CapsLock + letter` runs it without opening the panel.
+- **App launcher with focus**: if the app is already running, its window is brought to the front instead of starting a second copy. Press the shortcut again to minimize it (toggle).
+- **Macros**: remap awkward shortcuts to `CapsLock + letter`. Record a key combo with one click, test it, and limit it to a single app (for example only in `Code.exe`), so one letter can do different things in different programs.
+- **Terminal commands**: run a one-line command in a chosen folder through PowerShell. Commands are passed as `-EncodedCommand`, so quotes and special characters are safe.
+- **Text snippets**: type a trigger such as `;ok` followed by space, Enter or Tab and it expands to your text.
+- **Add, edit and remove from the UI**: the **+ Add** form validates input (missing files, duplicate names, key conflicts) and saves to a local `custom.ini`. No restart needed.
+- **History**: the last 100 entries you ran, kept across restarts in `history.ini`.
+
+## Requirements
+
+- Windows 10 or 11
+- [AutoHotkey v2](https://www.autohotkey.com/)
+
+## Getting started
+
+1. Install AutoHotkey v2.
+2. Clone or download this repository.
+3. Double-click `main.ahk`.
+4. Hold `CapsLock` and right-click anywhere to open the panel, then use **+ Add** to create your first entry.
+
+Personal data (`custom.ini`, `history.ini`) stays on your machine and is git-ignored.
+
+## Project structure
+
+| File | Purpose |
+| --- | --- |
+| `main.ahk` | Entry point, sets CapsLock as the leader key |
+| `menu.ahk` | The engine: panel UI, hotkeys, hotstrings, Add/Edit form, history |
+| `config.ahk` | Optional hand-written entries (format examples only by default) |
+
+---
+
+## Dokumentasi (Bahasa Indonesia)
 AutoHotkey v2. Jalankan dengan double-click `main.ahk`.
 CapsLock = tombol "leader" (fungsi caps dimatiin, pakai Shift buat kapital).
 
